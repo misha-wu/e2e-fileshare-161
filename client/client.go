@@ -101,7 +101,9 @@ func someUsefulThings() {
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
 	Username string
-
+	Password string
+	PrivateKey userlib.PKEDecKey
+	SignatureKey userlib.DSSignKey
 	// You can add other attributes here if you want! But note that in order for attributes to
 	// be included when this struct is serialized to/from JSON, they must be capitalized.
 	// On the flipside, if you have an attribute that you want to be able to access from
@@ -110,11 +112,124 @@ type User struct {
 	// begins with a lowercase letter).
 }
 
+
+// The struct for each file that informations on the starting 
+// and ending nodes of the FileNode linked list
+type File struct {
+	Filename       string
+	FirstNodeUUID  []byte
+	LastNodeUUID   []byte
+	FileAccessUUID []byte
+}
+
+
+// The struct for each node of the file's linked list
+type FileNode struct {
+	TextUUID         []byte
+	NextNodeUUID     []byte
+}
+
+
+// The struct that holds the uuids of the accessors 
+type FileAccess struct {
+	//stores everyone we authorize (our part of the tree)
+	AuthorizedUsers    map[string]byte
+  }
+
+//encrypted with RSA
+type AuthorizedUserIntermediate struct {
+	FileInterKey     []byte
+  }
+
+
+// The struct that holds the information about the file's data and its file keys
+type AuthorizedUser struct {
+	Owner           bool
+	OwnerHash       []byte
+	FileEncKey      []byte
+	FileMacKey      []byte
+	FileNameKey     []byte
+  }
+
+
+// The struct that stores the content of an AuthorizedUser struct.
+type FileInvite struct {
+	OwnerHash       []byte
+	FileEncKey      []byte
+	FileMacKey      []byte
+	FileNameKey     []byte
+	AuthorizedUserUUIDSignature  []byte
+  }
+
 // NOTE: The following methods have toy (insecure!) implementations.
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
+
+	// Variables initialization
 	var userdata User
-	userdata.Username = username
+	var publicKey userlib.PKEEncKey
+	var privateKey userlib.PKEDecKey
+	var signatureKey userlib.DSSignKey
+	var verifyKey userlib.DSVerifyKey
+
+	// Error checking for void username
+	if (len(username) == 0) {
+		return nil, errors.New("Cannot create a new user without an username")
+	}
+
+	// Generating PKE keys
+	publicKey, privateKey, _ = userlib.PKEKeyGen()
+	// Generating RSA keys
+	signatureKey, verifyKey, _ = userlib.DSKeyGen()
+
+	// Storing (username, verifyKey) in KeyStore
+	userlib.KeystoreSet(username, verifyKey)
+
+	// Generate macKey, encKey, and nameKey
+	macKey, encKey, nameKey, err := GenerateKeys(username, password) 
+
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return nil, errors.New("GenerateKeys fails")
+	}
+
+	// Create Hash(username)
+	usernameHash := userlib.Hash([]byte(username))
+	// Create UUID(Hash(username))
+	userUUID, err := uuid.FromBytes((usernameHash[:16]))
+
+	// Error checking if userUUID is already in DataStore
+	if _, ok := userlib.DatastoreGet(userUUID); ok == true {
+		return nil, errors.New("This username already exists in DataStore")
+	}
+	// Error checking if cannot create userUUID from usernameHash
+	if err != nil {
+		return nil, errors.New("Cannot create this userUUID")
+	}
+	
+	// Create the User struct
+	userdata = User{username, password, privateKey, signatureKey}
+	// Change the User struct into a byte slice
+	userdataByte, err := json.Marshal(userdata)
+	// Error checking if json.Marshal fails
+	if err != nil {
+	return nil, errors.New("Cannot serialize the User struct")
+	}
+
+	// Create Enc(User struct)
+	iv := userlib.RandomBytes(16)
+	encryptedUser := userlib.SymEnc(encKey, iv, userdataByte)
+
+	// Create HMAC(Enc(User struct)
+	HMACEncryptedUser, err := userlib.HMACEval(macKey, encryptedUser)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted User struct")
+	}
+
+	// Storing (userUUID, Enc(User struct) || HMAC(Enc(User struct)) in DataStore
+	userlib.DatastoreSet(userUUID, append(encryptedUser, HMACEncryptedUser...))
+
 	return &userdata, nil
 }
 
@@ -165,4 +280,32 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
 	return nil
+}
+
+/*
+	Helper methods
+*/
+
+// Helper to create macKey, encKey, nameKey
+func GenerateKeys(username string, password string) (macKey []byte, encKey []byte, nameKey []byte, err error) {
+	
+	// Create generatedKey = Argon2Key(H(password), salt=H(username), length=16)
+	usernameHash := userlib.Hash([]byte(username))
+	passwordHash := userlib.Hash([]byte(password))
+	generatedKey := userlib.Argon2Key(passwordHash, usernameHash, 16)
+
+	// Use generated_key as a base key in HashKDF to regenerate pseudorandom children keys
+	userKey, err := userlib.HashKDF(generatedKey, []byte("gen-key"))
+
+	// Error checking if userlib.HashKDF fails
+	if err != nil {
+		return nil, nil, nil, errors.New("Cannot generate children keys from generatedKey")
+	}
+
+	// Set children keys
+	macKey = userKey[0:16]
+	encKey = userKey[16:32]
+	nameKey = userKey[32:48]
+
+	return macKey, encKey, nameKey, nil
 }
