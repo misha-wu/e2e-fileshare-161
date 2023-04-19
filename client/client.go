@@ -167,7 +167,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	// Variables initialization
 	var userdata User
-	var publicKey userlib.PKEEncKey
 	var privateKey userlib.PKEDecKey
 	var signatureKey userlib.DSSignKey
 	var verifyKey userlib.DSVerifyKey
@@ -178,7 +177,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 
 	// Generating PKE keys
-	publicKey, privateKey, _ = userlib.PKEKeyGen()
+	_, privateKey, _ = userlib.PKEKeyGen()
 	// Generating RSA keys
 	signatureKey, verifyKey, _ = userlib.DSKeyGen()
 
@@ -186,7 +185,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(username, verifyKey)
 
 	// Generate macKey, encKey, and nameKey
-	macKey, encKey, nameKey, err := GenerateKeys(username, password) 
+	macKey, encKey, _, err := GenerateKeys(username, password) 
 
 	// Error checking if GenerateKeys fails
 	if err != nil {
@@ -235,6 +234,56 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
+	
+	// Recompute GenerateKeys
+	macKey, encKey, _, err := GenerateKeys(username, password) 
+
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return nil, errors.New("GenerateKeys fails")
+	}
+
+	// Create Hash(username)
+	usernameHash := userlib.Hash([]byte(username))
+	// Create UUID(Hash(username))
+	userUUID, err := uuid.FromBytes((usernameHash[:16]))
+
+	// Error checking if cannot create userUUID from usernameHash
+	if err != nil {
+		return nil, errors.New("Cannot create this userUUID")
+	}
+
+	// Fetching the DataStore entry
+	userEntry, isFetched := userlib.DatastoreGet(userUUID)
+	// Error checking if cannot retrieve the DataStore entry
+	if (!isFetched) {
+		return nil, errors.New("Incorrect username or password")
+	}
+
+	// Retrieve Enc(User struct)
+	encryptedUser := userEntry[:len(userEntry) - 64]
+
+	// Retrieve HMAC(Enc(User struct)
+	HMACEncryptedUser := userEntry[len(userEntry) - 64:]
+
+	// Create HMAC(Enc(User struct) with the regenerated macKey
+	newHMACEncryptedUser, err := userlib.HMACEval(macKey, encryptedUser)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted User struct")
+	}
+
+	// Confirm authenticity using HMACEqual()
+	if (!userlib.HMACEqual(HMACEncryptedUser, newHMACEncryptedUser)) {
+		return nil, errors.New("Data has been modified")
+	}
+
+	// Decrypt the encryptedUser
+	decryptedUser := userlib.SymDec(encKey, encryptedUser)
+
+	// Unmarshal the struct and recover user information
+	json.Unmarshal(decryptedUser, &userdata)
+	
 	userdataptr = &userdata
 	return userdataptr, nil
 }
@@ -283,7 +332,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 }
 
 /*
-	Helper methods
+	HELPER METHODS
 */
 
 // Helper to create macKey, encKey, nameKey
