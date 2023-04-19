@@ -244,4 +244,27 @@ var _ = Describe("Client Tests", func() {
 		})
 
 	})
+
+	Describe("InitUser/GetUser Tests", func() {
+		Specify("InitUser/GetUser Tests: Correct username/password", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user Alice.")
+			aliceLaptop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		})
+
+		Specify("InitUser/GetUser Tests: Incorrect username/password", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user Alice.")
+			aliceLaptop, err = client.GetUser("alice", "wrongpassword")
+			Expect(err).ToNot(BeNil())
+		})
+
+	})
 })
