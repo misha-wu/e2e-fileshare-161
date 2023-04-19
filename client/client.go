@@ -253,37 +253,16 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("Cannot create this userUUID")
 	}
 
-	// Fetching the DataStore entry
-	userEntry, isFetched := userlib.DatastoreGet(userUUID)
-	// Error checking if cannot retrieve the DataStore entry
-	if (!isFetched) {
-		return nil, errors.New("Incorrect username or password")
-	}
-
-	// Retrieve Enc(User struct)
-	encryptedUser := userEntry[:len(userEntry) - 64]
-
-	// Retrieve HMAC(Enc(User struct)
-	HMACEncryptedUser := userEntry[len(userEntry) - 64:]
-
-	// Create HMAC(Enc(User struct) with the regenerated macKey
-	newHMACEncryptedUser, err := userlib.HMACEval(macKey, encryptedUser)
-	// Error checking if HMACEval fails
-	if err != nil {
-		return nil, errors.New("Cannot HMAC the encrypted User struct")
-	}
-
-	// Confirm authenticity using HMACEqual()
-	if (!userlib.HMACEqual(HMACEncryptedUser, newHMACEncryptedUser)) {
-		return nil, errors.New("Data has been modified")
-	}
-
 	// Decrypt the encryptedUser
-	decryptedUser := userlib.SymDec(encKey, encryptedUser)
+	decryptedUser, err := userdata.ConfirmAuthencity(userUUID, macKey, encKey)
+	// Error checking if data has been tampered
+	if err != nil {
+		return nil, errors.New("Data has been tampered with")
+	}
 
 	// Unmarshal the struct and recover user information
 	json.Unmarshal(decryptedUser, &userdata)
-	
+
 	userdataptr = &userdata
 	return userdataptr, nil
 }
@@ -293,6 +272,34 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return err
 	}
+
+	// Generating PKE keys
+	// publicKey, _, err := userlib.PKEKeyGen()
+
+	if err != nil {
+		return errors.New("Cannot generate Public Key Encryption keys")
+	}
+
+	// Check for AuthorizedUserIntermediate entry to determine whether the file already exists
+
+	// key: RSA(key = your PUBLIC rsa key,
+	//	 value = "H(filename) || H(username) || H("Intermediate"))"
+
+	// H(filename) || H(username) || H("Intermediate")
+	fileHash := userlib.Hash([]byte(filename))
+	userHash := userlib.Hash([]byte(userdata.Username))
+	intermediateHash := userlib.Hash([]byte("Intermediate"))
+	combinedHash := append(fileHash, userHash...)
+	combinedHash = append(combinedHash, intermediateHash...)
+
+	// authorizedUserIntermediateEntryKey, err := userlib.PKEEnc(publicKey, combinedHash)
+	// Error checking if cannot generate PKEEnc
+	if err != nil {
+		return errors.New("Cannot use RSA public key to encrypt a message")
+	}
+
+
+
 	contentBytes, err := json.Marshal(content)
 	if err != nil {
 		return err
@@ -357,4 +364,38 @@ func GenerateKeys(username string, password string) (macKey []byte, encKey []byt
 	nameKey = userKey[32:48]
 
 	return macKey, encKey, nameKey, nil
+}
+
+// Helper to confirm authenticity (data has not been tampered with)
+func (userdata *User) ConfirmAuthencity(entryKey userlib.UUID, macKey []byte, encKey []byte) (content []byte, err error) {
+
+	// Fetching the DataStore entry
+	dataStoreEntry, isFetched := userlib.DatastoreGet(entryKey)
+	// Error checking if cannot retrieve the DataStore entry
+	if (!isFetched) {
+		return nil, errors.New("Incorrect username or password")
+	}
+
+	// Retrieve Enc(struct)
+	encryptedStruct := dataStoreEntry[:len(dataStoreEntry) - 64]
+
+	// Retrieve HMAC(Enc(struct))
+	HMACEncryptedStruct := dataStoreEntry[len(dataStoreEntry) - 64:]
+
+	// Create HMAC(Enc(struct) with the regenerated macKey
+	newHMACEncryptedStruct, err := userlib.HMACEval(macKey, encryptedStruct)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	// Confirm authenticity using HMACEqual()
+	if (!userlib.HMACEqual(HMACEncryptedStruct, newHMACEncryptedStruct)) {
+		return nil, errors.New("Data has been modified")
+	}
+
+	// Decrypt the encryptedStruct
+	decryptedStruct := userlib.SymDec(encKey, encryptedStruct)
+
+	return decryptedStruct, nil
 }
