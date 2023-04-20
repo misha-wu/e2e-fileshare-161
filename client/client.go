@@ -7,6 +7,7 @@ package client
 
 import (
 	"encoding/json"
+	"strconv"
 
 	userlib "github.com/cs161-staff/project2-userlib"
 	"github.com/google/uuid"
@@ -119,12 +120,12 @@ type File struct {
 	Filename       string
 	FirstNodeUUID  []byte
 	LastNodeUUID   []byte
-	FileAccessUUID []byte
 }
 
 
 // The struct for each node of the file's linked list
 type FileNode struct {
+	NodeNum          int
 	TextUUID         []byte
 	NextNodeUUID     []byte
 }
@@ -133,7 +134,7 @@ type FileNode struct {
 // The struct that holds the uuids of the accessors 
 type FileAccess struct {
 	//stores everyone we authorize (our part of the tree)
-	AuthorizedUsers    map[string]byte
+	AuthorizedUsers    []string
   }
 
 //encrypted with RSA
@@ -185,7 +186,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(username, verifyKey)
 
 	// Generate macKey, encKey, and nameKey
-	macKey, encKey, _, err := GenerateKeys(username, password) 
+	macKey, encKey, err := GenerateKeys(username, password) 
 
 	// Error checking if GenerateKeys fails
 	if err != nil {
@@ -236,7 +237,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	
 	// Recompute GenerateKeys
-	macKey, encKey, _, err := GenerateKeys(username, password) 
+	macKey, encKey, err := GenerateKeys(username, password) 
 
 	// Error checking if GenerateKeys fails
 	if err != nil {
@@ -268,44 +269,39 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
-	if err != nil {
-		return err
-	}
 
 	// Generating PKE keys
-	// publicKey, _, err := userlib.PKEKeyGen()
-
+	publicKey, privateKey, err := userlib.PKEKeyGen()
 	if err != nil {
 		return errors.New("Cannot generate Public Key Encryption keys")
 	}
+	// Generating RSA keys
+	signatureKey, verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return errors.New("Cannot generate Digital Signature keys")
+	}
 
+	// Generate macKey and encKey
+	macKey, encKey, err := GenerateKeys(userdata.Username, userdata.Password) 
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return errors.New("GenerateKeys fails")
+	}
+	
 	// Check for AuthorizedUserIntermediate entry to determine whether the file already exists
+	AuthorizedUserIntermediateEntry, err := userdata.AccessAuthorizedUserIntermediate(filename, publicKey)
 
-	// key: RSA(key = your PUBLIC rsa key,
-	//	 value = "H(filename) || H(username) || H("Intermediate"))"
-
-	// H(filename) || H(username) || H("Intermediate")
-	fileHash := userlib.Hash([]byte(filename))
-	userHash := userlib.Hash([]byte(userdata.Username))
-	intermediateHash := userlib.Hash([]byte("Intermediate"))
-	combinedHash := append(fileHash, userHash...)
-	combinedHash = append(combinedHash, intermediateHash...)
-
-	// authorizedUserIntermediateEntryKey, err := userlib.PKEEnc(publicKey, combinedHash)
-	// Error checking if cannot generate PKEEnc
-	if err != nil {
-		return errors.New("Cannot use RSA public key to encrypt a message")
+	// If the error is not nil, then e are creating a new file and storing it
+	if err != nil { 
+		err = userdata.StoringNewFile(filename, content, encKey, macKey, publicKey, privateKey, signatureKey, verifyKey)
+		if err != nil {
+			return err
+		}
+	// If the error is nil, then we are accessing an existing file
+	} else {
+		
 	}
-
-
-
-	contentBytes, err := json.Marshal(content)
-	if err != nil {
-		return err
-	}
-	userlib.DatastoreSet(storageKey, contentBytes)
-	return
+	return nil
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
@@ -343,7 +339,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 */
 
 // Helper to create macKey, encKey, nameKey
-func GenerateKeys(username string, password string) (macKey []byte, encKey []byte, nameKey []byte, err error) {
+func GenerateKeys(username string, password string) (macKey []byte, encKey []byte, err error) {
 	
 	// Create generatedKey = Argon2Key(H(password), salt=H(username), length=16)
 	usernameHash := userlib.Hash([]byte(username))
@@ -355,25 +351,24 @@ func GenerateKeys(username string, password string) (macKey []byte, encKey []byt
 
 	// Error checking if userlib.HashKDF fails
 	if err != nil {
-		return nil, nil, nil, errors.New("Cannot generate children keys from generatedKey")
+		return nil, nil, errors.New("Cannot generate children keys from generatedKey")
 	}
 
 	// Set children keys
 	macKey = userKey[0:16]
 	encKey = userKey[16:32]
-	nameKey = userKey[32:48]
 
-	return macKey, encKey, nameKey, nil
+	return macKey, encKey, nil
 }
 
-// Helper to confirm authenticity (data has not been tampered with)
+// Helper to confirm authenticity (data has not been tampered with) 
 func (userdata *User) ConfirmAuthencity(entryKey userlib.UUID, macKey []byte, encKey []byte) (content []byte, err error) {
 
 	// Fetching the DataStore entry
 	dataStoreEntry, isFetched := userlib.DatastoreGet(entryKey)
 	// Error checking if cannot retrieve the DataStore entry
 	if (!isFetched) {
-		return nil, errors.New("Incorrect username or password")
+		return nil, errors.New("Cannot retrieve DataStore entry")
 	}
 
 	// Retrieve Enc(struct)
@@ -398,4 +393,419 @@ func (userdata *User) ConfirmAuthencity(entryKey userlib.UUID, macKey []byte, en
 	decryptedStruct := userlib.SymDec(encKey, encryptedStruct)
 
 	return decryptedStruct, nil
+}
+
+// Helper function to access the AuthorizedUserIntermediate struct in DataStore
+func (userdata *User) AccessAuthorizedUserIntermediate(filename string, publicKey userlib.PKEEncKey) (structData []byte, err error) {
+	// key: RSA(key = your PUBLIC rsa key,
+	//	 value = "H(filename) || H(username) || H("Intermediate"))"
+
+	// H(filename) || H(username) || H("Intermediate")
+	fileHash := userlib.Hash([]byte(filename))
+	userHash := userlib.Hash([]byte(userdata.Username))
+	intermediateHash := userlib.Hash([]byte("Intermediate"))
+	combinedHash := append(fileHash, userHash...)
+	combinedHash = append(combinedHash, intermediateHash...)
+
+	authorizedUserIntermediateEntryKey, err := userlib.PKEEnc(publicKey, combinedHash)
+	// Error checking if cannot generate PKEEnc
+	if err != nil {
+		return nil, errors.New("Cannot use RSA public key to encrypt a message")
+	}
+	// Create UUID(authorizedUserIntermediateEntryKey)
+	authorizedUserIntermediateUUID, err := uuid.FromBytes((authorizedUserIntermediateEntryKey[:16]))
+	// Error checking if cannot create userUUID from usernameHash
+	if err != nil {
+		return nil, errors.New("Cannot create authorizedUserIntermediateUUID ")
+	}
+
+	authorizedUserIntermediateEntry, isFetched := userlib.DatastoreGet(authorizedUserIntermediateUUID)
+	// Error checking if cannot retrieve the DataStore entry
+	if (!isFetched) {
+		return nil, errors.New("Cannot retrieve DataStore entry")
+	}
+
+	return authorizedUserIntermediateEntry, nil
+}
+
+// Helper function to create an AuthorizedUserIntermediate entry in DataStore
+func (userdata *User) CreateAuthorizedUserIntermediate(filename string, publicKey userlib.PKEEncKey, fileInterKey []byte, signatureKey userlib.DSSignKey) (err error) { 
+	// key: RSA(key = your PUBLIC rsa key, value ="H(filename) || H(username) || H("Intermediate"))"
+	// value: RSA(key = RSA public key, value = fileInterKey ) || RSA_SIG(msg = RSA, key = RSA Signature key)
+
+	// H(filename) || H(username) || H("Intermediate")
+	fileHash := userlib.Hash([]byte(filename))
+	userHash := userlib.Hash([]byte(userdata.Username))
+	intermediateHash := userlib.Hash([]byte("Intermediate"))
+	combinedHash := append(fileHash, userHash...)
+	combinedHash = append(combinedHash, intermediateHash...)
+
+	entryKey, err := userlib.PKEEnc(publicKey, combinedHash)
+	// Error checking if cannot generate PKEEnc
+	if err != nil {
+		return errors.New("Cannot use RSA public key to encrypt a message")
+	}
+
+	// Create UUID(entryKey)
+	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return errors.New("Cannot create authorizedUserIntermediateUUID ")
+	}
+	
+	// RSA(key = RSA public key, value = fileInterKey)
+	entryRSA, err := userlib.PKEEnc(publicKey, fileInterKey)
+	// Error checking if cannot create the entryRSA
+	if err != nil {
+		return errors.New("Cannot use RSA public key to encrypt a message")
+	}
+
+	// RSA_SIG(msg = RSA, key = RSA Signature key)
+	entryRSASignature, err := userlib.DSSign(signatureKey, entryRSA)
+	// Error checking if cannot create the RSA Signature
+	if err != nil {
+		return errors.New("Cannot use RSA public key to encrypt a message")
+	}
+
+	// RSA(key = RSA public key, value = fileInterKey) 
+	// || RSA_SIG(msg = RSA, key = RSA Signature key)
+	entryValue := append(entryRSA, entryRSASignature...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(entryUUID, entryValue)
+
+	return nil
+}
+
+// Helper function to create an AuthorizedUser entry in DataStore
+func (userdata *User) CreateAuthorizedUser(filename string, publicKey userlib.PKEEncKey, 
+	fileInterKey []byte, fileEncKey []byte, fileMacKey []byte, authorizedUser []byte) (err error) { 
+
+	// key: HKDF(key = fileInterKey, value = H(filename) || H(username) || H("authUser"))
+ 	// value: Enc(key = fileEncKey, value = AuthorizedUser struct) || 
+	// HMAC(Enc(key = fileMacKey, value = AuthorizedUser struct))
+
+	// H(filename) || H(username) || H("authUser")
+	fileHash := userlib.Hash([]byte(filename))
+	userHash := userlib.Hash([]byte(userdata.Username))
+	authUserHash := userlib.Hash([]byte("authUser"))
+	combinedHash := append(fileHash, userHash...)
+	combinedHash = append(combinedHash, authUserHash...)
+
+	entryKey, err := userlib.HashKDF(fileInterKey, combinedHash)
+	// Error checking if cannot create the HashKDF
+	if err != nil {
+		return errors.New("Cannot create the Authorized User's entry key")
+	}
+
+	// Create UUID(entryKey)
+	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return errors.New("Cannot create Authorized User's UUID")
+	}
+
+	// Enc(key = fileEncKey, value = AuthorizedUser struct)
+	iv := userlib.RandomBytes(16)
+	encryptedAuthorizedUser := userlib.SymEnc(fileEncKey, iv, authorizedUser)
+
+	// HMAC(Enc(key = fileMacKey, value = AuthorizedUser struct))
+	HMACEncryptedAuthorizedUser, err := userlib.HMACEval(fileMacKey, encryptedAuthorizedUser)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	entryValue := append(encryptedAuthorizedUser, HMACEncryptedAuthorizedUser...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(entryUUID, entryValue)
+
+	return nil
+}
+
+// Helper function to create a FileAccess entry in DataStore
+func (userdata *User) CreateFileAccess(filename string, publicKey userlib.PKEEncKey, 
+	fileInterKey []byte, fileEncKey []byte, fileMacKey []byte, fileAccess []byte) (err error) { 
+
+	
+	// key: HKDF(key = fileInterKey, value = H(filename) || H(username) || H("fileAccess"))
+	// value: Enc(key = fileEncKey, value = FileAccess struct) 
+	// || HMAC(Enc(key = fileMacKey, value = FileAccess struct))
+
+	// H(filename) || H(username) || H("fileAccess")
+	fileHash := userlib.Hash([]byte(filename))
+	userHash := userlib.Hash([]byte(userdata.Username))
+	fileAccessHash := userlib.Hash([]byte("fileAccess"))
+	combinedHash := append(fileHash, userHash...)
+	combinedHash = append(combinedHash, fileAccessHash...)
+
+	entryKey, err := userlib.HashKDF(fileInterKey, combinedHash)
+	// Error checking if cannot create the HashKDF
+	if err != nil {
+		return errors.New("Cannot create the File Access's entry key")
+	}
+
+	// Create UUID(entryKey)
+	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return errors.New("Cannot create File Access's UUID")
+	}
+
+	// Enc(key = fileEncKey, value = FileAccess struct)
+	iv := userlib.RandomBytes(16)
+	encryptedFileAccess := userlib.SymEnc(fileEncKey, iv, fileAccess)
+
+	// HMAC(Enc(key = fileMacKey, value = FileAccess struct))
+	HMACEncryptedFileAccess, err := userlib.HMACEval(fileMacKey, encryptedFileAccess)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	entryValue := append(encryptedFileAccess, HMACEncryptedFileAccess...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(entryUUID, entryValue)
+
+	return nil
+}
+
+// Helper function to create a File entry in DataStore
+func (userdata *User) CreateFile(filename string, publicKey userlib.PKEEncKey, 
+	fileNameKey []byte, fileEncKey []byte, fileMacKey []byte, ownerHash []byte, file []byte) (err error) { 
+
+	
+	// key: HKDF(key = fileNameKey, value = H(filename) || ownerHash || H("file"))
+	// value: Enc(key = fileEncKey, value = File struct) 
+	// || HMAC(Enc(key = fileMacKey, value = File struct))
+
+	// H(filename) || ownerHash || H("file")
+	fileHash := userlib.Hash([]byte(filename))
+	fileStringHash := userlib.Hash([]byte("file"))
+	combinedHash := append(fileHash, ownerHash...)
+	combinedHash = append(combinedHash, fileStringHash...)
+
+	entryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
+	// Error checking if cannot create the HashKDF
+	if err != nil {
+		return errors.New("Cannot create the File's entry key")
+	}
+
+	// Create UUID(entryKey)
+	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return errors.New("Cannot create File's UUID")
+	}
+
+	// Enc(key = fileEncKey, value = File struct)
+	iv := userlib.RandomBytes(16)
+	encryptedFile := userlib.SymEnc(fileEncKey, iv, file)
+
+	// HMAC(Enc(key = fileMacKey, value = File struct))
+	HMACEncryptedFile, err := userlib.HMACEval(fileMacKey, encryptedFile)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	entryValue := append(encryptedFile, HMACEncryptedFile...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(entryUUID, entryValue)
+
+	return nil
+}
+
+// Helper function to create a FileNode entry in DataStore
+func (userdata *User) CreateFileNode(filename string, publicKey userlib.PKEEncKey, 
+	fileNameKey []byte, fileEncKey []byte, fileMacKey []byte, ownerHash []byte, content []byte, nodeNum int) (fileNodeEntryKey []byte, err error) { 
+
+	// Create the content entry in DataStore to point the TextUUID field of the struct to
+
+	// key: HKDF(key = fileNameKey, value = H(filename) || OwnerHash || H("fileNodeContent[num]"))
+	// value: Enc(key = fileEncKey, value = contents of file) || HMAC(Enc(key = fileMacKey, value = contents of file))
+	nodeNumString := strconv.Itoa(nodeNum)
+	// H(filename) || OwnerHash || H("fileNodeContent[num]")
+	fileHash := userlib.Hash([]byte(filename))
+	fileNodeContentNum := userlib.Hash([]byte("fileNodeContent"+nodeNumString))
+	combinedHash := append(fileHash, ownerHash...)
+	combinedHash = append(combinedHash, fileNodeContentNum...)
+
+	contentEntryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
+	// Error checking if cannot create the HashKDF
+	if err != nil {
+		return nil, errors.New("Cannot create the content's entry key")
+	}
+
+	// Create UUID(contentEntryKey)
+	contentEntryUUID, err := uuid.FromBytes((contentEntryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return nil, errors.New("Cannot create contentEntryUUID")
+	}
+
+	// Enc(key = file_enc_key, value = contents of file) 
+	iv := userlib.RandomBytes(16)
+	encryptedContent := userlib.SymEnc(fileEncKey, iv, content)
+
+	// HMAC(Enc(key = file_mac_key, value = contents of file))
+	HMACEncryptedContent, err := userlib.HMACEval(fileMacKey, encryptedContent)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted content")
+	}
+
+	contentEntryValue := append(encryptedContent, HMACEncryptedContent...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(contentEntryUUID, contentEntryValue)
+	
+
+	// Create the FileNode entry in DataStore
+	
+	
+	// key: HKDF(key = fileNameKey, value = H(filename) || OwnerHash || H("fileNode[num]"))
+	// value: Enc(key = fileEncKey, value = FileNode struct) || HMAC(Enc(key = fileMacKey, value =FileNode struct))
+
+	// H(filename) || OwnerHash || H("fileNode[num]")
+	fileNodeNum := userlib.Hash([]byte("fileNode"+nodeNumString))
+	newCombinedHash := append(fileHash, ownerHash...)
+	newCombinedHash = append(newCombinedHash, fileNodeNum...)
+
+	entryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
+	// Error checking if cannot create the HashKDF
+	if err != nil {
+		return nil, errors.New("Cannot create the File Node's entry key")
+	}
+
+	// Create UUID(entryKey)
+	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	// Error checking if cannot create userUUID from entryKey
+	if err != nil {
+		return nil, errors.New("Cannot create File Node's UUID")
+	}
+
+	// Create the FileNode struct
+	nextNodeUUID := []byte("null")
+	fileNodeStruct := FileNode{nodeNum, contentEntryKey, nextNodeUUID}
+	// Change the FileNode struct into a byte slice
+	fileNodeByte, err := json.Marshal(fileNodeStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+	return nil, errors.New("Cannot serialize the FileNode struct")
+	}
+
+	// Enc(key = fileEncKey, value = FileNode struct)
+	iv = userlib.RandomBytes(16)
+	encryptedFileNode := userlib.SymEnc(fileEncKey, iv, fileNodeByte)
+
+	// HMAC(Enc(key = fileMacKey, value = FileNode struct))
+	HMACEncryptedFileNode, err := userlib.HMACEval(fileMacKey, encryptedFileNode)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	entryValue := append(encryptedFileNode, HMACEncryptedFileNode...)
+
+	// Storing (key, value) in DataStore
+	userlib.DatastoreSet(entryUUID, entryValue)
+
+	return entryKey, nil
+}
+
+
+// Helper function to create a file_key for encryption and decryption
+func GenerateFileKeys() (fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, err error) {
+	fileKey := userlib.RandomBytes(64)
+	fileEncKey = fileKey[0:16]
+	fileMacKey = fileKey[17:32]
+	fileNameKey = fileKey[32:48]
+	fileInterKey = fileKey[48:64]
+
+	return fileEncKey, fileMacKey, fileNameKey, fileInterKey, nil
+}
+
+func (userdata *User) StoringNewFile(filename string, content []byte, encKey []byte, macKey []byte, publicKey userlib.PKEEncKey,
+	privateKey userlib.PKEDecKey, signatureKey userlib.DSSignKey, verifyKey userlib.DSVerifyKey) (err error) {
+
+	// Generate fileKey parts
+	fileEncKey, fileMacKey, fileNameKey, fileInterKey, err := GenerateFileKeys()
+	// Error checking if GenerateFileKeys fails
+	if err != nil {
+		return errors.New("GenerateFileKeys fails")
+	}
+
+	// Create an AuthorizedUserIntermediate entry in DataStore
+	err = userdata.CreateAuthorizedUserIntermediate(filename, publicKey, fileInterKey, signatureKey)
+	// Error checking if cannot create an AuthorizedUserIntermediate entry in DataStore
+	if err != nil {
+		return err
+	}
+
+	// Create an AuthorizedUser entry in DataStore
+	// Create the OwnerHash = Enc(value = Owner's username, key = enc_key, iv=random)
+	iv := userlib.RandomBytes(16)
+	ownerHash := userlib.SymEnc(encKey, iv, []byte(userdata.Username))
+
+	// Create the AuthorizedUser struct
+	authorizedUserStruct := AuthorizedUser{true, ownerHash, fileEncKey, fileMacKey, fileNameKey}
+	// Change the AuthorizedUser struct into a byte slice
+	authorizedUserByte, err := json.Marshal(authorizedUserStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+	return errors.New("Cannot serialize the AuthorizedUser struct")
+	}
+
+	err = userdata.CreateAuthorizedUser(filename, publicKey, fileInterKey, fileEncKey, fileMacKey, authorizedUserByte)
+	// Error checking if cannot create an AuthorizedUser entry in DataStore
+	if err != nil {
+		return err
+	}
+
+	// Create a FileAccess entry in DataStore
+	// Create the FileAccess struct
+	authorizedUsers := make([]string, 1)
+	authorizedUsers[0] = userdata.Username
+	
+	fileAccessStruct:= FileAccess{authorizedUsers}
+	// Change the File Access struct into a byte slice
+	fileAccessByte, err := json.Marshal(fileAccessStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+	return errors.New("Cannot serialize the FileAccess struct")
+	}
+
+	err = userdata.CreateFileAccess(filename, publicKey, fileInterKey, fileEncKey, fileMacKey, fileAccessByte)
+	if err != nil {
+		return err
+	}
+
+	// Create a FileNode entry in DataStore
+	nodeNum := 1
+	fileNodeEntry, err := userdata.CreateFileNode(filename, publicKey, fileNameKey, fileEncKey, fileMacKey, ownerHash, content, nodeNum)
+	if err != nil {
+		return err
+	}
+
+	// Create a File entry in DataStore
+	
+	// Create the File struct
+	fileStruct := File{filename, fileNodeEntry, fileNodeEntry}
+	// Change the AuthorizedUser struct into a byte slice
+	fileByte, err := json.Marshal(fileStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+	return errors.New("Cannot serialize the File struct")
+	}
+
+	err = userdata.CreateFile(filename, publicKey, fileNameKey, fileEncKey, fileMacKey, ownerHash, fileByte)
+	if err != nil {
+		return  err
+	}
+
+	return nil
 }
