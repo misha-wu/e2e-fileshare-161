@@ -310,7 +310,6 @@ var _ = Describe("Client Tests", func() {
 			data, err = alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentTwo)))
-
 		})
 
 	})
