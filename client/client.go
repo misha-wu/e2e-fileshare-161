@@ -129,6 +129,10 @@ type FileNode struct {
 	NextNodeUUID     []byte
 }
 
+type FileNodeContent struct {
+	content          []byte
+}
+
 
 // The struct that holds the uuids of the accessors 
 type FileAccess struct {
@@ -190,7 +194,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 
 	// Generate macKey, encKey, and nameKey
-	macKey, encKey, err := GenerateKeys(username, password) 
+	macKey, encKey, _, err := GenerateKeys(username, password) 
 
 	// Error checking if GenerateKeys fails
 	if err != nil {
@@ -241,7 +245,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	
 	// Recompute GenerateKeys
-	macKey, encKey, err := GenerateKeys(username, password) 
+	macKey, encKey, _, err := GenerateKeys(username, password) 
 
 	// Error checking if GenerateKeys fails
 	if err != nil {
@@ -275,7 +279,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	
 	// Generate macKey and encKey
-	macKey, encKey, err := GenerateKeys(userdata.Username, userdata.Password) 
+	macKey, encKey, nameKey, err := GenerateKeys(userdata.Username, userdata.Password) 
 	// Error checking if GenerateKeys fails
 	if err != nil {
 		return errors.New("GenerateKeys fails")
@@ -297,11 +301,11 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	signatureKey := userdata.SignatureKey
 	
 	// Check for AuthorizedUserIntermediate entry to determine whether the file already exists
-	AuthorizedUserIntermediateEntry, err := userdata.AccessAuthorizedUserIntermediate(filename, publicKey)
+	AuthorizedUserIntermediateEntry, err := userdata.AccessAuthorizedUserIntermediate(filename, nameKey, publicKey)
 
 	// If the error is not nil, then we are creating a new file and storing it
 	if err != nil { 
-		err = userdata.StoringNewFile(filename, content, encKey, macKey, publicKey, privateKey, signatureKey, verifyKey)
+		err = userdata.StoringNewFile(filename, content, encKey, macKey, nameKey, publicKey, privateKey, signatureKey, verifyKey)
 		if err != nil {
 			return err
 		}
@@ -344,6 +348,12 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
+	// Generate macKey and encKey
+	_,_, nameKey, err := GenerateKeys(userdata.Username, userdata.Password) 
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return nil, errors.New("GenerateKeys fails")
+	}
 	
 	publicKey, isFetched := userlib.KeystoreGet(userdata.Username + "publicKey")
 	// Error checking if cannot retrieve the KeyStore entry
@@ -360,7 +370,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	privateKey := userdata.PrivateKey
 	
 	// Check for AuthorizedUserIntermediate entry to determine whether the file already exists
-	AuthorizedUserIntermediateEntry, err := userdata.AccessAuthorizedUserIntermediate(filename, publicKey)
+	AuthorizedUserIntermediateEntry, err := userdata.AccessAuthorizedUserIntermediate(filename, nameKey, publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +419,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 */
 
 // Helper to create macKey, encKey, nameKey
-func GenerateKeys(username string, password string) (macKey []byte, encKey []byte, err error) {
+func GenerateKeys(username string, password string) (macKey []byte, encKey []byte, nameKey []byte, err error) {
 	
 	// Create generatedKey = Argon2Key(H(password), salt=H(username), length=16)
 	usernameHash := userlib.Hash([]byte(username))
@@ -421,14 +431,15 @@ func GenerateKeys(username string, password string) (macKey []byte, encKey []byt
 
 	// Error checking if userlib.HashKDF fails
 	if err != nil {
-		return nil, nil, errors.New("Cannot generate children keys from generatedKey")
+		return nil, nil, nil, errors.New("Cannot generate children keys from generatedKey")
 	}
 
 	// Set children keys
 	macKey = userKey[0:16]
 	encKey = userKey[16:32]
+	nameKey = userKey[32:48]
 
-	return macKey, encKey, nil
+	return macKey, encKey, nameKey, nil
 }
 
 // Helper to confirm authenticity (data has not been tampered with) 
@@ -483,7 +494,7 @@ func (userdata *User) ConfirmAuthencityIntermediate(entryValue []byte, privateKe
 	// Decrypt RSA(key = RSA public key, value = AuthorizedUserIntermediate struct)
 	content, err = userlib.PKEDec(privateKey, encryptedStruct)
 	if err != nil {
-		return nil, errors.New("Cannot decrypy this AuthorizedUserIntermediate entry")
+		return nil, errors.New("Cannot decrypt this AuthorizedUserIntermediate entry")
 	}
 	
 	return content, nil
@@ -495,7 +506,7 @@ func (userdata *User) AccessFileNode(entryKey []byte, fileNameKey []byte, fileEn
 	
 	
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey)- 16:]))
 	// Error checking if cannot create UUID from entryKey
 	if err != nil {
 		return nil, nil, errors.New("Cannot create FileNode's UUID")
@@ -515,7 +526,7 @@ func (userdata *User) AccessFileNode(entryKey []byte, fileNameKey []byte, fileEn
 	nextNode = fileNode.NextNodeUUID
 
 	// Create UUID(contentKey)
-	contentUUID, err := uuid.FromBytes((contentKey[:16]))
+	contentUUID, err := uuid.FromBytes((contentKey[len(contentKey) - 16:]))
 	// Error checking if cannot create UUID from contentKey
 	if err != nil {
 		return nil, nil, errors.New("Cannot create FileNodeContent's UUID")
@@ -527,9 +538,8 @@ func (userdata *User) AccessFileNode(entryKey []byte, fileNameKey []byte, fileEn
 		return nil, nil, err
 	}
 
-	// Unmarshal the content 
-	json.Unmarshal(decryptedFileNodeContent, &content)
-
+	content = decryptedFileNodeContent
+	
 	return content, nextNode, err
 }
 // Helper function to access the File struct in DataStore
@@ -541,6 +551,7 @@ func (userdata *User) AccessFile(filename string, ownerHash []byte, fileNameKey 
 	fileStringHash := userlib.Hash([]byte("file"))
 	combinedHash := append(fileHash, ownerHash...)
 	combinedHash = append(combinedHash, fileStringHash...)
+	combinedHash = userlib.Hash(combinedHash)
 
 	entryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
 	// Error checking if cannot create the HashKDF
@@ -549,7 +560,7 @@ func (userdata *User) AccessFile(filename string, ownerHash []byte, fileNameKey 
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err = uuid.FromBytes((entryKey[:16]))
+	entryUUID, err = uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create UUID from entryKey
 	if err != nil {
 		return uuid.New(), errors.New("Cannot create File's UUID")
@@ -569,7 +580,8 @@ func (userdata *User) AccessAuthorizedUser(filename string, fileInterKey []byte)
 	authUserHash := userlib.Hash([]byte("authUser"))
 	combinedHash := append(fileHash, userHash...)
 	combinedHash = append(combinedHash, authUserHash...)
-
+	combinedHash = userlib.Hash(combinedHash)
+	
 	entryKey, err := userlib.HashKDF(fileInterKey, combinedHash)
 	// Error checking if cannot create the HashKDF
 	if err != nil {
@@ -577,7 +589,7 @@ func (userdata *User) AccessAuthorizedUser(filename string, fileInterKey []byte)
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err = uuid.FromBytes((entryKey[:16]))
+	entryUUID, err = uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create UUID from entryKey
 	if err != nil {
 		return uuid.New(), errors.New("Cannot create Authorized User's UUID")
@@ -587,7 +599,7 @@ func (userdata *User) AccessAuthorizedUser(filename string, fileInterKey []byte)
 }
 
 // Helper function to access the AuthorizedUserIntermediate struct in DataStore
-func (userdata *User) AccessAuthorizedUserIntermediate(filename string, publicKey userlib.PKEEncKey) (structData []byte, err error) {
+func (userdata *User) AccessAuthorizedUserIntermediate(filename string, nameKey []byte, publicKey userlib.PKEEncKey) (structData []byte, err error) {
 	// key: RSA(key = your PUBLIC rsa key,
 	//	 value = "H(filename) || H(username) || H("Intermediate"))"
 
@@ -599,13 +611,14 @@ func (userdata *User) AccessAuthorizedUserIntermediate(filename string, publicKe
 	combinedHash = append(combinedHash, intermediateHash...)
 	combinedHash = userlib.Hash(combinedHash)
 
-	authorizedUserIntermediateEntryKey, err := userlib.PKEEnc(publicKey, combinedHash)
-	// Error checking if cannot generate PKEEnc
+	authorizedUserIntermediateEntryKey, err := userlib.HashKDF(nameKey, combinedHash)
+	// Error checking if cannot create the HashKDF
 	if err != nil {
-		return nil, errors.New("Cannot use RSA public key to encrypt a message")
+		return nil, errors.New("Cannot create the AuthorizedUserIntermediate's entry key")
 	}
+
 	// Create UUID(authorizedUserIntermediateEntryKey)
-	authorizedUserIntermediateUUID, err := uuid.FromBytes((authorizedUserIntermediateEntryKey[:16]))
+	authorizedUserIntermediateUUID, err := uuid.FromBytes((authorizedUserIntermediateEntryKey[len(authorizedUserIntermediateEntryKey) - 16:]))
 	// Error checking if cannot create UUID from usernameHash
 	if err != nil {
 		return nil, errors.New("Cannot create authorizedUserIntermediateUUID ")
@@ -621,7 +634,7 @@ func (userdata *User) AccessAuthorizedUserIntermediate(filename string, publicKe
 }
 
 // Helper function to create an AuthorizedUserIntermediate entry in DataStore
-func (userdata *User) CreateAuthorizedUserIntermediate(filename string, publicKey userlib.PKEEncKey, fileInterKey []byte, signatureKey userlib.DSSignKey, authorizedUserIntermediate []byte) (err error) { 
+func (userdata *User) CreateAuthorizedUserIntermediate(filename string, nameKey []byte, publicKey userlib.PKEEncKey, fileInterKey []byte, signatureKey userlib.DSSignKey, authorizedUserIntermediate []byte) (err error) { 
 	// key: RSA(key = your PUBLIC rsa key, value ="H(filename) || H(username) || H("Intermediate"))"
 	// value: RSA(key = RSA public key, value = AuthorizedUserIntermediate struct) || RSA_SIG(msg = RSA(AuthorizedUserIntermediate struct), key = RSA Signature key)
 
@@ -633,14 +646,14 @@ func (userdata *User) CreateAuthorizedUserIntermediate(filename string, publicKe
 	combinedHash = append(combinedHash, intermediateHash...)
 	combinedHash = userlib.Hash(combinedHash)
 
-	entryKey, err := userlib.PKEEnc(publicKey, combinedHash)
-	// Error checking if cannot generate PKEEnc
+	entryKey, err := userlib.HashKDF(nameKey, combinedHash)
+	// Error checking if cannot create the HashKDF
 	if err != nil {
-		return errors.New("Cannot use RSA public key to encrypt a message")
+		return errors.New("Cannot create the AuthorizedUserIntermediate's entry key")
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create UUID from entryKey
 	if err != nil {
 		return errors.New("Cannot create authorizedUserIntermediateUUID ")
@@ -684,6 +697,7 @@ func (userdata *User) CreateAuthorizedUser(filename string,  fileInterKey []byte
 	authUserHash := userlib.Hash([]byte("authUser"))
 	combinedHash := append(fileHash, userHash...)
 	combinedHash = append(combinedHash, authUserHash...)
+	combinedHash = userlib.Hash(combinedHash)
 
 	entryKey, err := userlib.HashKDF(fileInterKey, combinedHash)
 	// Error checking if cannot create the HashKDF
@@ -692,7 +706,7 @@ func (userdata *User) CreateAuthorizedUser(filename string,  fileInterKey []byte
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create userUUID from entryKey
 	if err != nil {
 		return errors.New("Cannot create Authorized User's UUID")
@@ -732,6 +746,7 @@ func (userdata *User) CreateFileAccess(filename string,
 	fileAccessHash := userlib.Hash([]byte("fileAccess"))
 	combinedHash := append(fileHash, userHash...)
 	combinedHash = append(combinedHash, fileAccessHash...)
+	combinedHash = userlib.Hash(combinedHash)
 
 	entryKey, err := userlib.HashKDF(fileInterKey, combinedHash)
 	// Error checking if cannot create the HashKDF
@@ -740,7 +755,7 @@ func (userdata *User) CreateFileAccess(filename string,
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create userUUID from entryKey
 	if err != nil {
 		return errors.New("Cannot create File Access's UUID")
@@ -779,6 +794,7 @@ func (userdata *User) CreateFile(filename string, fileNameKey []byte,
 	fileStringHash := userlib.Hash([]byte("file"))
 	combinedHash := append(fileHash, ownerHash...)
 	combinedHash = append(combinedHash, fileStringHash...)
+	combinedHash = userlib.Hash(combinedHash)
 
 	entryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
 	// Error checking if cannot create the HashKDF
@@ -787,7 +803,7 @@ func (userdata *User) CreateFile(filename string, fileNameKey []byte,
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create userUUID from entryKey
 	if err != nil {
 		return errors.New("Cannot create File's UUID")
@@ -826,6 +842,7 @@ func (userdata *User) CreateFileNode(filename string, fileNameKey []byte, fileEn
 	fileNodeContentNum := userlib.Hash([]byte("fileNodeContent"+nodeNumString))
 	combinedHash := append(fileHash, ownerHash...)
 	combinedHash = append(combinedHash, fileNodeContentNum...)
+	combinedHash = userlib.Hash(combinedHash)
 
 	contentEntryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
 	// Error checking if cannot create the HashKDF
@@ -834,7 +851,7 @@ func (userdata *User) CreateFileNode(filename string, fileNameKey []byte, fileEn
 	}
 
 	// Create UUID(contentEntryKey)
-	contentEntryUUID, err := uuid.FromBytes((contentEntryKey[:16]))
+	contentEntryUUID, err := uuid.FromBytes((contentEntryKey[len(contentEntryKey) - 16:]))
 	// Error checking if cannot create userUUID from entryKey
 	if err != nil {
 		return nil, errors.New("Cannot create contentEntryUUID")
@@ -867,15 +884,16 @@ func (userdata *User) CreateFileNode(filename string, fileNameKey []byte, fileEn
 	fileNodeNum := userlib.Hash([]byte("fileNode"+nodeNumString))
 	newCombinedHash := append(fileHash, ownerHash...)
 	newCombinedHash = append(newCombinedHash, fileNodeNum...)
+	newCombinedHash = userlib.Hash(newCombinedHash)
 
-	entryKey, err := userlib.HashKDF(fileNameKey, combinedHash)
+	entryKey, err := userlib.HashKDF(fileNameKey, newCombinedHash)
 	// Error checking if cannot create the HashKDF
 	if err != nil {
 		return nil, errors.New("Cannot create the File Node's entry key")
 	}
 
 	// Create UUID(entryKey)
-	entryUUID, err := uuid.FromBytes((entryKey[:16]))
+	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey) - 16:]))
 	// Error checking if cannot create userUUID from entryKey
 	if err != nil {
 		return nil, errors.New("Cannot create File Node's UUID")
@@ -979,7 +997,7 @@ func GenerateFileKeys() (fileEncKey []byte, fileMacKey []byte, fileNameKey []byt
 }
 
 // Helper function to store a new file (with userdata as the owner)
-func (userdata *User) StoringNewFile(filename string, content []byte, encKey []byte, macKey []byte, publicKey userlib.PKEEncKey,
+func (userdata *User) StoringNewFile(filename string, content []byte, encKey []byte, macKey []byte, nameKey []byte, publicKey userlib.PKEEncKey,
 	privateKey userlib.PKEDecKey, signatureKey userlib.DSSignKey, verifyKey userlib.DSVerifyKey) (err error) {
 
 	// Generate fileKey parts
@@ -1000,7 +1018,7 @@ func (userdata *User) StoringNewFile(filename string, content []byte, encKey []b
 	return errors.New("Cannot serialize the AuthorizedUser struct")
 	}
 
-	err = userdata.CreateAuthorizedUserIntermediate(filename, publicKey, fileInterKey, signatureKey, authorizedUserIntermediateByte)
+	err = userdata.CreateAuthorizedUserIntermediate(filename,  nameKey, publicKey, fileInterKey, signatureKey, authorizedUserIntermediateByte)
 	// Error checking if cannot create an AuthorizedUserIntermediate entry in DataStore
 	if err != nil {
 		return err

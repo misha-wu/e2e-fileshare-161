@@ -281,14 +281,37 @@ var _ = Describe("Client Tests", func() {
 			err = alice.StoreFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
 
+			userlib.DebugMsg("Loading file")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+		})
+
+		Specify("StoreFile/LoadFile Tests: Storing on an existing file", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
 			userlib.DebugMsg("Storing file data: %s", contentTwo)
 			err = alice.StoreFile(aliceFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 
-			// userlib.DebugMsg("Loading file")
-			// data, err := alice.LoadFile(aliceFile)
-			// Expect(err).To(BeNil())
-			// Expect(data).To(Equal([]byte(contentOne)))
+			userlib.DebugMsg("Loading file")
+			data, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+
 		})
+
 	})
 })
