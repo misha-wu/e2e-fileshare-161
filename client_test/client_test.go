@@ -265,6 +265,21 @@ var _ = Describe("Client Tests", func() {
 			aliceLaptop, err = client.GetUser("alice", "wrongpassword")
 			Expect(err).ToNot(BeNil())
 		})
+	})
 
+	Describe("StoreFile/LoadFile Tests", func() {
+		Specify("StoreFile/LoadFile Tests: Storing new file", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user Alice.")
+			aliceLaptop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())	
+			
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		})
 	})
 })
