@@ -723,6 +723,61 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+
+	// Generate macKey and encKey
+	_,_, nameKey, err := GenerateKeys(userdata.Username, userdata.Password) 
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return errors.New("GenerateKeys fails")
+	}
+	
+	publicKey, isFetched := userlib.KeystoreGet(userdata.Username + "publicKey")
+	// Error checking if cannot retrieve the KeyStore entry
+	if (!isFetched) {
+		return errors.New("Cannot retrieve Public Key")
+	}
+
+	verifyKey, isFetched := userlib.KeystoreGet(userdata.Username + "verifyKey")
+	// Error checking if cannot retrieve the KeyStore entry
+	if (!isFetched) {
+		return errors.New("Cannot retrieve Verify Key")
+	}
+
+	privateKey := userdata.PrivateKey
+	
+	// Check for AuthorizedUserIntermediate entry to determine whether the file already exists
+	AuthorizedUserIntermediateEntry, err := AccessAuthorizedUserIntermediate(filename, nameKey, userdata.Username, publicKey)
+	if err != nil {
+		return err
+	}
+	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry 
+	_, err = userdata.ConfirmAuthenticityIntermediate(AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	if err != nil {
+		return err
+	}
+
+	authorizedUser, _, oldFileInterKey, err := userdata.GetAuthorizedUser(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	if err != nil {
+		return err
+	}
+
+	if authorizedUser.Owner != true {
+		return errors.New("This user is not the file's owner, cannot revoke access")
+	}
+
+	oldFileEncKey := authorizedUser.FileEncKey
+	oldFileMacKey := authorizedUser.FileMacKey
+	oldFileNameKey := authorizedUser.FileNameKey
+
+	// Generate new fileKey parts
+	fileEncKey, fileMacKey, fileNameKey, fileInterKey, err := GenerateFileKeys()
+	// Error checking if GenerateFileKeys fails
+	if err != nil {
+		return errors.New("GenerateFileKeys fails")
+	}
+
+	
+
 	return nil
 }
 

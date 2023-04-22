@@ -352,7 +352,7 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("CreateInvitation/AcceptInvitation Tests ", func() {
 
-		Specify("CreateInvitation/AcceptInvitation Tests", func() {
+		Specify("CreateInvitation/AcceptInvitation Tests: Overwriting the original file", func() {
 			
 			userlib.DebugMsg("Initializing users Alice (aliceDesktop) and Bob.")
 			aliceDesktop, err = client.InitUser("alice", defaultPassword)
@@ -377,6 +377,59 @@ var _ = Describe("Client Tests", func() {
 			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).To(BeNil())
 
+			userlib.DebugMsg("Bob storing file %s with content: %s", bobFile, contentTwo)
+			err = bob.StoreFile(bobFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err := aliceDesktop.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+		})
+
+		Specify("CreateInvitation/AcceptInvitation Tests: Two sharees and appending files", func() {
+			userlib.DebugMsg("Initializing users Alice (aliceDesktop) and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob appending to file %s, content: %s", bobFile, contentTwo)
+			err = bob.AppendToFile(bobFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("bob creating invite for Charles.")
+			invite, err = bob.CreateInvitation(bobFile, "charles")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Charles accepting invite from Bob under filename %s.", charlesFile)
+			err = charles.AcceptInvitation("bob", invite, charlesFile)
+			Expect(err).To(BeNil())
+			
+			userlib.DebugMsg("Charles appending to file %s, content: %s", charlesFile, contentThree)
+			err = charles.AppendToFile(charlesFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that Alice sees expected file data.")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
 
 		})
 	})
