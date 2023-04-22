@@ -267,7 +267,7 @@ var _ = Describe("Client Tests", func() {
 		})
 	})
 
-	Describe("StoreFile/LoadFile Tests", func() {
+	Describe("StoreFile/LoadFile Single User Tests ", func() {
 		Specify("StoreFile/LoadFile Tests: Storing new file", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -288,22 +288,26 @@ var _ = Describe("Client Tests", func() {
 
 		})
 
-		Specify("StoreFile/LoadFile Tests: Storing on an existing file", func() {
+		Specify("StoreFile/LoadFile Single User Tests: Storing on an existing file", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
 			
+			userlib.DebugMsg("Getting user Alice.")
+			aliceLaptop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Storing file data: %s", contentOne)
 			err = alice.StoreFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Loading file")
-			data, err := alice.LoadFile(aliceFile)
+			data, err := aliceLaptop.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne)))
 
 			userlib.DebugMsg("Storing file data: %s", contentTwo)
-			err = alice.StoreFile(aliceFile, []byte(contentTwo))
+			err = aliceLaptop.StoreFile(aliceFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Loading file")
@@ -312,5 +316,68 @@ var _ = Describe("Client Tests", func() {
 			Expect(data).To(Equal([]byte(contentTwo)))
 		})
 
+		Specify("StoreFile/LoadFile Tests: Appending and then Storing", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentTwo)
+			err = alice.AppendToFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentThree)
+			err = alice.AppendToFile(aliceFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Storing file data: %s", contentTwo)
+			err = alice.StoreFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+		})
+	})
+
+
+	Describe("CreateInvitation/AcceptInvitation Tests ", func() {
+
+		Specify("CreateInvitation/AcceptInvitation Tests", func() {
+			
+			userlib.DebugMsg("Initializing users Alice (aliceDesktop) and Bob.")
+			aliceDesktop, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting second instance of Alice - aliceLaptop")
+			aliceLaptop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("aliceDesktop storing file %s with content: %s", aliceFile, contentOne)
+			err = aliceDesktop.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("aliceLaptop creating invite for Bob.")
+			invite, err := aliceLaptop.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+
+		})
 	})
 })
