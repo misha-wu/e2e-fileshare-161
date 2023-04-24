@@ -836,7 +836,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 
-	for i := 0; i < len(authUsers); i++ {
+	for i := 1; i < len(authUsers); i++ {
 		sharee := authUsers[i]
 		if sharee != recipientUsername {
 			userdata.RecursivelyRegenHelperStructs(sharee, filename, fileEncKey,
