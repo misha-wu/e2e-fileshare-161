@@ -215,7 +215,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 
 	// Create the User struct
-	authorizedTo := make([]SharedFrom, 1)
+	authorizedTo := make([]SharedFrom, 0)
 	// authorizedUsers[0] = userdata.Username
 	userdata = User{username, password, privateKey, signatureKey, authorizedTo}
 	// Change the User struct into a byte slice
@@ -476,7 +476,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	}
 
 	for nextNode != nil {
-		text, nextNodeKey, _,_, err := userdata.AccessFileNodeContent(nextNode, fileNameKey, fileEncKey, fileMacKey)
+		text, nextNodeKey, _, _, err := userdata.AccessFileNodeContent(nextNode, fileNameKey, fileEncKey, fileMacKey)
 		if err != nil {
 			return nil, err
 		}
@@ -717,6 +717,13 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 
+	//update owner struct
+	var fileList []string = make([]string, 1)
+	fileList[0] = userdata.Username
+	var sharedStruct SharedFrom = SharedFrom{senderUsername, fileList}
+	// append(userdata.AuthorizedTo, sharedStruct)
+	// append()
+	userdata.AuthorizedTo = append(userdata.AuthorizedTo, sharedStruct)
 	// Delete the FileInvite entry
 	userlib.DatastoreDelete(invitationPtr)
 	return nil
@@ -759,7 +766,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var authorizedUserInter AuthorizedUserIntermediate
 	json.Unmarshal(DecryptedAuthUserInter, &authorizedUserInter)
 
-	authorizedUser, _, _, err := userdata.GetAuthorizedUser(userdata.Username, filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	authorizedUser, _, oldFileInterKey, err := userdata.GetAuthorizedUser(userdata.Username, filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return err
 	}
@@ -770,8 +777,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 
 	oldFileEncKey := authorizedUser.FileEncKey
 	oldFileMacKey := authorizedUser.FileMacKey
-	// oldFileNameKey := authorizedUser.FileNameKey
-	// oldOwnerHash := authorizedUser.OwnerHash
+	oldFileNameKey := authorizedUser.FileNameKey
+	oldOwnerHash := authorizedUser.OwnerHash
 
 	// Generate new fileKey parts
 	fileEncKey, fileMacKey, fileNameKey, fileInterKey, err := GenerateFileKeys()
@@ -783,7 +790,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	ownerHash := userlib.RandomBytes(16)
 
 	//iterate through file nodes and reencrypt
-	
+
 	fileAccessKey, err := userdata.AccessFileAccess(userdata.Username, filename, oldFileInterKey)
 	if err != nil {
 		return err
@@ -798,18 +805,75 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	// Unmarshal the struct and recover information
 	var fileAccess FileAccess
 	json.Unmarshal(fileAccessValue, &fileAccess)
-	
+	var authUsers []string = fileAccess.AuthorizedUsers
 
+	//remake file
+	err = userdata.ReencryptFileAndNodes(filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileNameKey, oldOwnerHash)
 	//remake structs for self
-	userdata.RegenHelperStructs(userdata.Username, userdata.Password, true, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash)
+	if err != nil {
+		return err
+	}
+	err = userdata.RegenHelperStructs(userdata.Username, true, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash)
 
-	for child in owner.fileAccess{
-		if child == recipient: pass
-		else: recursivelyRegen(child)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < len(authUsers); i++ {
+		sharee := authUsers[i]
+		if sharee != recipientUsername {
+			userdata.RecursivelyRegenHelperStructs(sharee, filename, fileEncKey,
+				fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileNameKey, oldOwnerHash)
+		}
+		// fmt.Println(arr[i])
 	}
 
 	//dfs
 	return nil
+}
+
+func (userdata *User) RecursivelyRegenHelperStructs(un string, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte,
+	fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileNameKey []byte, oldOwnerHash []byte) (err error) {
+	//regen own struct then get it with new keys
+	err = userdata.RegenHelperStructs(un, false, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash)
+	if err != nil {
+		return err
+	}
+
+	fileAccessKey, err := userdata.AccessFileAccess(un, filename, fileInterKey)
+	if err != nil {
+		return err
+	}
+
+	// Decrypt the entry
+	fileAccessValue, err := userdata.ConfirmAuthenticityHMAC(fileAccessKey, fileMacKey, fileEncKey)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the struct and recover information
+	var fileAccess FileAccess
+	json.Unmarshal(fileAccessValue, &fileAccess)
+	var authUsers []string = fileAccess.AuthorizedUsers
+
+	//remake file
+	err = userdata.ReencryptFileAndNodes(filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileNameKey, oldOwnerHash)
+	//remake structs for self
+	if err != nil {
+		return err
+	}
+
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < len(authUsers); i++ {
+		sharee := authUsers[i]
+		userdata.RecursivelyRegenHelperStructs(sharee, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileNameKey, oldOwnerHash)
+		// fmt.Println(arr[i])
+	}
+	return nil
+
 }
 
 /*
@@ -817,7 +881,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 */
 
 // reencrypt a file and its nodes with the given keys
-func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, 
+func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte,
 	fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileNameKey []byte, oldOwnerHash []byte) (err error) {
 	// Generate macKey and encKey
 	// Retrieve the file
@@ -867,7 +931,6 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 		return err
 	}
 
-	
 	// Re-encrypt the File struct, HMAC, and re-store in DataStore
 
 	//delete file
@@ -878,7 +941,7 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 	firstNode := fileEntryContent.FirstNodeUUID
 	nodeNum := 1
 
-	//get first node information SHOULD I NULL CHECK 
+	//get first node information SHOULD I NULL CHECK
 	text, nextNode, contentUUID, _, err := userdata.AccessFileNodeContent(firstNode, oldFileNameKey, oldFileEncKey, oldFileMacKey)
 	if err != nil || text == nil {
 		return err
@@ -889,7 +952,6 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 	userlib.DatastoreDelete(entryUUID)
 	// Deeleting the file node's entry
 	userlib.DatastoreDelete(contentUUID)
-
 
 	//create new node
 	createdNode, err := userdata.CreateNewFileNode(filename, fileNameKey, fileEncKey, fileMacKey, ownerHash, text, nodeNum)
@@ -933,13 +995,16 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 
 // reencrypt a file's AuthorizedUserInter, AuthorizedUser, FileAccess structs
 // may not be called by owner of structs
-func (userdata *User) RegenHelperStructs(un string, pw string, owner bool, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte) (err error) {
+// un is caller
+// fileowner is whose
+func (userdata *User) RegenHelperStructs(un string, owner bool, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte) (err error) {
 	// Generate macKey and encKey
-	_, _, nameKey, err := GenerateKeys(un, pw)
-	// Error checking if GenerateKeys fails
-	if err != nil {
-		return errors.New("GenerateKeys fails")
-	}
+	// _, _, nameKey, err := GenerateKeys(un, pw)
+	// // Error checking if GenerateKeys fails
+	// if err != nil {
+	// 	return errors.New("GenerateKeys fails")
+	// }
+	nameKey := []byte("nothing")
 
 	publicKey, isFetched := userlib.KeystoreGet(un + "publicKey")
 	// Error checking if cannot retrieve the KeyStore entry
@@ -1159,7 +1224,8 @@ func (userdata *User) ConfirmAuthenticityIntermediate(entryValue []byte, private
 }
 
 // Helper function to access the FileNodeContent struct in DataStore
-func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte, fileEncKey []byte, fileMacKey []byte) (content []byte, nextNode []byte, contentUUID userlib.UUID, nodeNum int, err error) {
+func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte, fileEncKey []byte, fileMacKey []byte) (
+	content []byte, nextNode []byte, contentUUID userlib.UUID, nodeNum int, err error) {
 	// key: HKDF(key = fileNameKey, value = H(filename) || ownerHash || H("fileNode[num]"))
 
 	// Create UUID(entryKey)
@@ -1172,7 +1238,7 @@ func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte,
 	// Decrypt the retrieved FileNode entry
 	decryptedFileNode, err := userdata.ConfirmAuthenticityHMAC(entryUUID, fileMacKey, fileEncKey)
 	if err != nil {
-		return nil, nil,uuid.New(), 0, err
+		return nil, nil, uuid.New(), 0, err
 	}
 
 	// Unmarshal the struct and recover information
@@ -1184,16 +1250,16 @@ func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte,
 	nextNode = fileNode.NextNodeUUID
 
 	// Create UUID(contentKey)
-	contentUUID, err := uuid.FromBytes((contentKey[len(contentKey)-16:]))
+	contentUUID, err = uuid.FromBytes((contentKey[len(contentKey)-16:]))
 	// Error checking if cannot create UUID from contentKey
 	if err != nil {
-		return nil, nil, 0, errors.New("Cannot create FileNodeContent's UUID")
+		return nil, nil, uuid.New(), 0, errors.New("Cannot create FileNodeContent's UUID")
 	}
 
 	// Decrypt the FileNodeContent entry
 	decryptedFileNodeContent, err := userdata.ConfirmAuthenticityHMAC(contentUUID, fileMacKey, fileEncKey)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, uuid.New(), 0, err
 	}
 
 	content = decryptedFileNodeContent
