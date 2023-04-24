@@ -470,13 +470,13 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	// Get the firstNode's key
 	firstNode := fileEntryContent.FirstNodeUUID
 
-	content, nextNode, _, err := userdata.AccessFileNodeContent(firstNode, fileNameKey, fileEncKey, fileMacKey)
+	content, nextNode, _, _, err := userdata.AccessFileNodeContent(firstNode, fileNameKey, fileEncKey, fileMacKey)
 	if err != nil {
 		return nil, err
 	}
 
 	for nextNode != nil {
-		text, nextNodeKey, _, err := userdata.AccessFileNodeContent(nextNode, fileNameKey, fileEncKey, fileMacKey)
+		text, nextNodeKey, _,_, err := userdata.AccessFileNodeContent(nextNode, fileNameKey, fileEncKey, fileMacKey)
 		if err != nil {
 			return nil, err
 		}
@@ -768,8 +768,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return errors.New("This user is not the file's owner, cannot revoke access")
 	}
 
-	// oldFileEncKey := authorizedUser.FileEncKey
-	// oldFileMacKey := authorizedUser.FileMacKey
+	oldFileEncKey := authorizedUser.FileEncKey
+	oldFileMacKey := authorizedUser.FileMacKey
 	// oldFileNameKey := authorizedUser.FileNameKey
 	// oldOwnerHash := authorizedUser.OwnerHash
 
@@ -783,9 +783,30 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	ownerHash := userlib.RandomBytes(16)
 
 	//iterate through file nodes and reencrypt
+	
+	fileAccessKey, err := userdata.AccessFileAccess(userdata.Username, filename, oldFileInterKey)
+	if err != nil {
+		return err
+	}
+
+	// Decrypt the entry
+	fileAccessValue, err := userdata.ConfirmAuthenticityHMAC(fileAccessKey, oldFileMacKey, oldFileEncKey)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the struct and recover information
+	var fileAccess FileAccess
+	json.Unmarshal(fileAccessValue, &fileAccess)
+	
 
 	//remake structs for self
 	userdata.RegenHelperStructs(userdata.Username, userdata.Password, true, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash)
+
+	for child in owner.fileAccess{
+		if child == recipient: pass
+		else: recursivelyRegen(child)
+	}
 
 	//dfs
 	return nil
@@ -796,7 +817,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 */
 
 // reencrypt a file and its nodes with the given keys
-func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte) (err error) {
+func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, 
+	fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileNameKey []byte, oldOwnerHash []byte) (err error) {
 	// Generate macKey and encKey
 	// Retrieve the file
 	// Generate macKey and encKey
@@ -845,28 +867,29 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 		return err
 	}
 
-	oldFileEncKey, oldFileMacKey, oldFileNameKey, _, oldOwnerHash, err := userdata.getFileKeys(un, userdata.Password, filename)
-	if err != nil {
-		return err
-	}
+	
 	// Re-encrypt the File struct, HMAC, and re-store in DataStore
 
 	//delete file
 	fileUUID, err := userdata.AccessFile(filename, oldOwnerHash, oldFileNameKey)
 	userlib.DatastoreDelete(fileUUID)
 
-	// Get the firstNode's key
+	// Get the firstNode entry's key
 	firstNode := fileEntryContent.FirstNodeUUID
 	nodeNum := 1
 
-	//get first node information SHOULD I NULL CHECK
-	text, nextNode, _, err := userdata.AccessFileNodeContent(firstNode, oldFileNameKey, oldFileEncKey, oldFileMacKey)
+	//get first node information SHOULD I NULL CHECK 
+	text, nextNode, contentUUID, _, err := userdata.AccessFileNodeContent(firstNode, oldFileNameKey, oldFileEncKey, oldFileMacKey)
 	if err != nil || text == nil {
 		return err
 	}
 
+	// Deleting the file node
 	entryUUID, err := uuid.FromBytes((firstNode[len(firstNode)-16:]))
 	userlib.DatastoreDelete(entryUUID)
+	// Deeleting the file node's entry
+	userlib.DatastoreDelete(contentUUID)
+
 
 	//create new node
 	createdNode, err := userdata.CreateNewFileNode(filename, fileNameKey, fileEncKey, fileMacKey, ownerHash, text, nodeNum)
@@ -876,14 +899,15 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 
 	// var prevNode []byte = nil
 	for nextNode != nil {
-		text, nextnextNode, _, err := userdata.AccessFileNodeContent(nextNode, oldFileNameKey, fileEncKey, fileMacKey)
+		text, nextnextNode, contentUUID, _, err := userdata.AccessFileNodeContent(nextNode, oldFileNameKey, fileEncKey, fileMacKey)
 		if err != nil {
 			return err
 		}
 
-		//get old UUID of this node and delete
+		//get old UUID of this node and delete (also delete content)
 		entryUUID, err := uuid.FromBytes((firstNode[len(firstNode)-16:]))
 		userlib.DatastoreDelete(entryUUID)
+		userlib.DatastoreDelete(contentUUID)
 
 		//make new one
 		//create new node
@@ -1135,20 +1159,20 @@ func (userdata *User) ConfirmAuthenticityIntermediate(entryValue []byte, private
 }
 
 // Helper function to access the FileNodeContent struct in DataStore
-func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte, fileEncKey []byte, fileMacKey []byte) (content []byte, nextNode []byte, nodeNum int, err error) {
+func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte, fileEncKey []byte, fileMacKey []byte) (content []byte, nextNode []byte, contentUUID userlib.UUID, nodeNum int, err error) {
 	// key: HKDF(key = fileNameKey, value = H(filename) || ownerHash || H("fileNode[num]"))
 
 	// Create UUID(entryKey)
 	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey)-16:]))
 	// Error checking if cannot create UUID from entryKey
 	if err != nil {
-		return nil, nil, 0, errors.New("Cannot create FileNode's UUID")
+		return nil, nil, uuid.New(), 0, errors.New("Cannot create FileNode's UUID")
 	}
 
 	// Decrypt the retrieved FileNode entry
 	decryptedFileNode, err := userdata.ConfirmAuthenticityHMAC(entryUUID, fileMacKey, fileEncKey)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil,uuid.New(), 0, err
 	}
 
 	// Unmarshal the struct and recover information
@@ -1174,7 +1198,7 @@ func (userdata *User) AccessFileNodeContent(entryKey []byte, fileNameKey []byte,
 
 	content = decryptedFileNodeContent
 
-	return content, nextNode, nodeNum, err
+	return content, nextNode, contentUUID, nodeNum, err
 }
 
 // Helper function to access the FileNode struct in DataStore
