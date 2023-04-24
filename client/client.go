@@ -862,6 +862,7 @@ func (userdata *User) RecursivelyRegenHelperStructs(un string, filename string, 
 	if err != nil {
 		return err
 	}
+	//help
 
 	if err != nil {
 		return err
