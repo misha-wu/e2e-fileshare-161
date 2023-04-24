@@ -98,7 +98,7 @@ func someUsefulThings() {
 
 type SharedFrom struct {
 	Username string
-	Filename []string
+	Filename string
 }
 
 // This is the type definition for the User struct.
@@ -189,6 +189,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	// Storing (username, verifyKey) in KeyStore
 	userlib.KeystoreSet(username+"verifyKey", verifyKey)
+
 	// Storing (username, publicKey) in KeyStore
 	userlib.KeystoreSet(username+"publicKey", publicKey)
 
@@ -456,7 +457,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return nil, err
 	}
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	_, err = userdata.ConfirmAuthenticityIntermediate(AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	_, err = userdata.ConfirmAuthenticityIntermediate(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return nil, err
 	}
@@ -718,14 +719,30 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	}
 
 	//update owner struct
-	var fileList []string = make([]string, 1)
-	fileList[0] = userdata.Username
-	var sharedStruct SharedFrom = SharedFrom{senderUsername, fileList}
-	// append(userdata.AuthorizedTo, sharedStruct)
-	// append()
-	userdata.AuthorizedTo = append(userdata.AuthorizedTo, sharedStruct)
+	// var fileList []string = make([]string, 1)
+	// fileList[0] = userdata.Username
+	userStruct, err := GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return err
+	}
+
+	var sharedStruct SharedFrom = SharedFrom{senderUsername, filename}
+	userStruct.AuthorizedTo = append(userStruct.AuthorizedTo, sharedStruct)
+
+	newUserBytes, err := json.Marshal(userStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+		return errors.New("Cannot serialize the File struct")
+	}
+
+	err = userdata.UpdateUserStruct(userdata.Username, userdata.Password, newUserBytes)
+	if err != nil {
+		return err
+	}
+
 	// Delete the FileInvite entry
 	userlib.DatastoreDelete(invitationPtr)
+
 	return nil
 }
 
@@ -758,7 +775,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return err
 	}
@@ -914,7 +931,7 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 		return err
 	}
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return err
 	}
@@ -995,9 +1012,7 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 }
 
 // reencrypt a file's AuthorizedUserInter, AuthorizedUser, FileAccess structs
-// may not be called by owner of structs
-// un is caller
-// fileowner is whose
+// may not be called by owner of structs (but called by owner of file)
 func (userdata *User) RegenHelperStructs(un string, owner bool, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte) (err error) {
 	// Generate macKey and encKey
 	// _, _, nameKey, err := GenerateKeys(un, pw)
@@ -1095,6 +1110,7 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	return nil
 }
 
+// called by owner of data hopefully...
 func (userdata *User) getFileKeys(un string, pw string, filename string) (oldFileEncKey []byte, oldFileMacKey []byte, oldFileNameKey []byte, oldFileInterKey []byte, oldOwnerHash []byte, err error) {
 	_, _, nameKey, err := GenerateKeys(un, pw)
 	// Error checking if GenerateKeys fails
@@ -1122,7 +1138,7 @@ func (userdata *User) getFileKeys(un string, pw string, filename string) (oldFil
 		return nil, nil, nil, nil, nil, err
 	}
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
@@ -1140,6 +1156,43 @@ func (userdata *User) getFileKeys(un string, pw string, filename string) (oldFil
 	oldOwnerHash = authorizedUser.OwnerHash
 
 	return oldFileEncKey, oldFileMacKey, oldFileNameKey, oldFileInterKey, oldOwnerHash, nil
+}
+
+func (userdata *User) UpdateUserStruct(username string, password string, content []byte) (err error) {
+
+	// Recompute GenerateKeys
+	macKey, encKey, _, err := GenerateKeys(username, password)
+
+	// Error checking if GenerateKeys fails
+	if err != nil {
+		return errors.New("GenerateKeys fails")
+	}
+
+	// Create Hash(username)
+	usernameHash := userlib.Hash([]byte(username))
+	// Create UUID(Hash(username))
+	userUUID, err := uuid.FromBytes((usernameHash[:16]))
+
+	// Error checking if cannot create userUUID from usernameHash
+	if err != nil {
+		return errors.New("Cannot create this userUUID")
+	}
+
+	// Create Enc(User struct)
+	iv := userlib.RandomBytes(16)
+	encryptedUser := userlib.SymEnc(encKey, iv, content)
+
+	// Create HMAC(Enc(User struct)
+	HMACEncryptedUser, err := userlib.HMACEval(macKey, encryptedUser)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return errors.New("Cannot HMAC the encrypted User struct")
+	}
+
+	// Storing (userUUID, Enc(User struct) || HMAC(Enc(User struct)) in DataStore
+	userlib.DatastoreSet(userUUID, append(encryptedUser, HMACEncryptedUser...))
+
+	return nil
 }
 
 // Helper to create macKey, encKey, nameKey
@@ -1201,16 +1254,39 @@ func (userdata *User) ConfirmAuthenticityHMAC(entryKey userlib.UUID, macKey []by
 }
 
 // Helper function to check and decrypt the retrieved AuthorizedUserIntermediate
-func (userdata *User) ConfirmAuthenticityIntermediate(entryValue []byte, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (content []byte, err error) {
+func (userdata *User) ConfirmAuthenticityIntermediate(filename string, entryValue []byte, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (content []byte, err error) {
 
+	var ownerVerifyKey userlib.DSVerifyKey
+	var isFetched bool = false
 	// Retrieve RSA(key = RSA public key, value = AuthorizedUserIntermediate struct)
 	encryptedStruct := entryValue[:len(entryValue)-256]
 
 	// Retrieve RSA_SIG(msg = RSA(AuthorizedUserIntermediate struct), key = RSA Signature key)
 	signature := entryValue[len(entryValue)-256:]
 
+	// AuthorizedTo []SharedFrom
+	authTo := userdata.AuthorizedTo
+
+	for i := 0; i < len(authTo); i++ {
+		sharee := authTo[i]
+		if sharee.Filename == filename {
+			ownerVerifyKey, isFetched = userlib.KeystoreGet(sharee.Username + "verifyKey")
+			// Error checking if cannot retrieve the KeyStore entry
+			if !isFetched {
+				return nil, errors.New("Cannot retrieve Verify Key")
+			}
+
+		}
+		// fmt.Println(arr[i])
+	}
 	// Use the RSA public key to verify the signature
-	err = userlib.DSVerify(verifyKey, encryptedStruct, signature)
+	if isFetched {
+		err = userlib.DSVerify(ownerVerifyKey, encryptedStruct, signature)
+	} else {
+		err = userlib.DSVerify(verifyKey, encryptedStruct, signature)
+	}
+	// Unmarshal the struct and recover information
+
 	if err != nil {
 		return nil, errors.New("Cannot verify the signature of this AuthorizedUserIntermediate")
 	}
@@ -1789,7 +1865,7 @@ func (userdata *User) GetAuthorizedUser(username string, filename string, author
 	privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (authorizedUser AuthorizedUser, authorizedUserKey []byte, fileInterKey []byte, err error) {
 
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	decryptedIntermediate, err := userdata.ConfirmAuthenticityIntermediate(authorizedUserIntermediate, privateKey, verifyKey)
+	decryptedIntermediate, err := userdata.ConfirmAuthenticityIntermediate(filename, authorizedUserIntermediate, privateKey, verifyKey)
 	if err != nil {
 		return authorizedUser, nil, nil, err
 	}
@@ -1829,7 +1905,7 @@ func (userdata *User) GetFile(filename string, authorizedUserIntermediate []byte
 	var fileEntryContent File
 
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
-	decryptedIntermediate, err := userdata.ConfirmAuthenticityIntermediate(authorizedUserIntermediate, privateKey, verifyKey)
+	decryptedIntermediate, err := userdata.ConfirmAuthenticityIntermediate(filename, authorizedUserIntermediate, privateKey, verifyKey)
 	if err != nil {
 		return fileEntryContent, nil, nil, nil, nil, nil, originalFileName, err
 	}
