@@ -137,10 +137,6 @@ type FileNode struct {
 	NextNodeUUID []byte
 }
 
-type FileNodeContent struct {
-	Content []byte
-}
-
 // The struct that holds the uuids of the accessors
 type FileAccess struct {
 	//stores everyone we authorize (our part of the tree)
@@ -156,7 +152,7 @@ type AuthorizedUserIntermediate struct {
 
 // The struct that holds the information about the file's data and its file keys
 type AuthorizedUser struct {
-	Filename       []byte
+	OwnerFileAlias []byte
 	Owner          bool
 	OwnerHash      []byte
 	FileEncKey     []byte
@@ -2210,7 +2206,7 @@ func (userdata *User) CreateNewFileNode(filename []byte, fileNameKey []byte, fil
 	return entryKey, nil
 }
 
-// Herlper function to retrieve the AuthorizedUser struct after obtaining the AuthorizedUserIntermediate entry
+// Helper function to retrieve the AuthorizedUser struct after obtaining the AuthorizedUserIntermediate entry
 func (userdata *User) GetAuthorizedUser(username string, filename []byte, authorizedUserIntermediate []byte,
 	privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (authorizedUser AuthorizedUser, authorizedUserKey []byte, fileInterKey []byte, err error) {
 
