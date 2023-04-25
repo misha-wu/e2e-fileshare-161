@@ -137,7 +137,7 @@ type FileNode struct {
 }
 
 type FileNodeContent struct {
-	content []byte
+	Content []byte
 }
 
 // The struct that holds the uuids of the accessors
@@ -728,34 +728,11 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 
-	//update owner struct
-	// var fileList []string = make([]string, 1)
-	// fileList[0] = userdata.Username
-	userStruct, err := GetUser(userdata.Username, userdata.Password)
-	if err != nil {
-		return err
-	}
-
-	var sharedStruct SharedFrom = SharedFrom{senderUsername, filename}
-	userStruct.AuthorizedTo = append(userStruct.AuthorizedTo, sharedStruct)
-
-	newUserBytes, err := json.Marshal(userStruct)
-	// Error checking if json.Marshal fails
-	if err != nil {
-		return errors.New("Cannot serialize the File struct")
-	}
-
-	err = userdata.UpdateUserStruct(userdata.Username, userdata.Password, newUserBytes)
-	if err != nil {
-		return err
-	}
-
 	// Create a MailBox entry in DataStore
 	authorizedUserInterKey, _, err := AccessAuthorizedUserIntermediate(filename, nameKey, userdata.Username, publicKey)
 	if err != nil {
 		return err
 	}
-
 
 	mailBoxStruct := MailBox{authorizedUserInterKey}
 	userlib.DebugMsg("The authorizedUserInterKey is %x", authorizedUserInterKey)
@@ -770,6 +747,54 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	err = userdata.CreateMailBox(userdata.Username, ownerHash, ownerPublicKey, authorizedUserInterKey, fileEncKey, fileMacKey, mailBoxByte)
 	if err != nil {
 		return err
+	}
+
+	//update owner struct
+	// var fileList []string = make([]string, 1)
+	// fileList[0] = userdata.Username
+	userStruct, err := GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return err
+	}
+
+	var sharedStruct SharedFrom = SharedFrom{senderUsername, filename}
+	userStruct.AuthorizedTo = append(userStruct.AuthorizedTo, sharedStruct)
+	// userlib.DebugMsg("sharedfrom now contains %s.", userStruct.AuthorizedTo[0])
+	// userlib.DebugMsg("print userstruct %s.", userStruct)
+
+	newUserBytes, err := json.Marshal(userStruct)
+	// Error checking if json.Marshal fails
+	if err != nil {
+		return errors.New("Cannot serialize the File struct")
+	}
+
+	err = userdata.UpdateUserStruct(userdata.Username, userdata.Password, newUserBytes)
+	if err != nil {
+		return err
+	}
+
+	//after update, testing
+	userStruct, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return err
+	}
+
+	// AuthorizedTo []SharedFrom
+	authTo := userStruct.AuthorizedTo
+	//print it
+	if filename == "eveFile.txt" {
+		userlib.DebugMsg("!!!!!!!!!!!!!!!!!printing authTo")
+		userlib.DebugMsg("current user: %s", userdata.Username)
+
+		for i := 0; i < len(authTo); i++ {
+			sharee := authTo[i]
+			userlib.DebugMsg("sharee: un: %s, file: %s", sharee.Username, sharee.Filename)
+		}
+
+		// for i := 0; i < len(authToReal); i++ {
+		// 	sharee := authToReal[i]
+		// 	userlib.DebugMsg("sharee: un: %s, file: %s", sharee.Username, sharee.Filename)
+		// }
 	}
 
 	// Delete the FileInvite entry
@@ -862,7 +887,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
-	err = userdata.RegenOwnerStructs(userdata.Username, true, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileInterKey, oldOwnerHash)
+	err = userdata.RegenOwnerStructs(userdata.Username, recipientUsername, filename, fileEncKey, fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileInterKey, oldOwnerHash)
 
 	if err != nil {
 		return err
@@ -1035,7 +1060,7 @@ func (userdata *User) ReencryptFileAndNodes(filename string, fileEncKey []byte, 
 	return nil
 }
 
-func (userdata *User) RegenOwnerStructs(un string, owner bool, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileInterKey []byte, oldOwnerHash []byte) (err error) {
+func (userdata *User) RegenOwnerStructs(un string, revokedUser string, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileInterKey []byte, oldOwnerHash []byte) (err error) {
 	// Generate macKey and encKey
 	// _, _, nameKey, err := GenerateKeys(un, pw)
 	// // Error checking if GenerateKeys fails
@@ -1050,21 +1075,69 @@ func (userdata *User) RegenOwnerStructs(un string, owner bool, filename string, 
 		return errors.New("Cannot retrieve Public Key")
 	}
 
-	userlib.DebugMsg("regenownerstructs: getting %s's public key which is %s", userdata.Username, publicKey)
+	// userlib.DebugMsg("regenownerstructs: getting %s's public key which is %s", userdata.Username, publicKey)
+
 	//create new structs
 	var newAuthorizedUserInter AuthorizedUserIntermediate = AuthorizedUserIntermediate{fileInterKey, fileEncKey, fileMacKey}
-	var newAuthorizedUser AuthorizedUser = AuthorizedUser{filename, owner, ownerHash, fileEncKey, fileMacKey, fileNameKey, fileInterKey, publicKey}
-	
-	// var newFileAccess FileAccess = FileAccess{} //we need to set this later
+	var newAuthorizedUser AuthorizedUser = AuthorizedUser{filename, true, ownerHash, fileEncKey, fileMacKey, fileNameKey, fileInterKey, publicKey}
 
-	//AUTH USER INTER STRUCT=================================
-	// H(filename) || H(username) || H("Intermediate")
+	// var newFileAccess FileAccess = FileAccess{} //we need to set this later
 	fileHash := userlib.Hash([]byte(filename))
 	userHash := userlib.Hash([]byte(un))
 	intermediateHash := userlib.Hash([]byte("Intermediate"))
 	combinedHash := append(fileHash, userHash...)
 	combinedHash = append(combinedHash, intermediateHash...)
 	combinedHash = userlib.Hash(combinedHash)
+
+	//remake fileAccess
+
+	fileAccessKey, err := userdata.AccessFileAccess(un, filename, oldFileInterKey)
+	if err != nil {
+		return err
+	}
+
+	// Decrypt the entry
+	fileAccessValue, err := userdata.ConfirmAuthenticityHMAC(fileAccessKey, oldFileMacKey, oldFileEncKey)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the struct and recover information
+	var fileAccess FileAccess
+	json.Unmarshal(fileAccessValue, &fileAccess)
+
+	//delete old fileAccess
+	userlib.DatastoreDelete(fileAccessKey)
+
+	var i int
+	var found bool
+
+	for i = 0; i < len(fileAccess.AuthorizedUsers); i++ {
+		sharee := fileAccess.AuthorizedUsers[i]
+		if sharee == revokedUser {
+			found = true
+			break
+		}
+		// fmt.Println(arr[i])
+	}
+	if !found {
+		return errors.New("user to revoke does not have access")
+	}
+	fileAccess.AuthorizedUsers = removeFromArray(fileAccess.AuthorizedUsers, i)
+
+	fileAccessValue, err = json.Marshal(fileAccess)
+	if err != nil {
+		return err
+	}
+
+	//recreate
+	err = userdata.CreateFileAccess(un, filename, fileInterKey, fileEncKey, fileMacKey, fileAccessValue)
+	if err != nil {
+		return err
+	}
+
+	//AUTH USER INTER STRUCT=================================
+	// H(filename) || H(username) || H("Intermediate")
 
 	// Create UUID(combinedHash)
 	interUUID, err := uuid.FromBytes((combinedHash[len(combinedHash)-16:]))
@@ -1103,47 +1176,20 @@ func (userdata *User) RegenOwnerStructs(un string, owner bool, filename string, 
 
 	err = userdata.CreateAuthorizedUser(un, filename, fileInterKey, fileEncKey, fileMacKey, authUserByte)
 
-	//remake fileAccess
-
-	fileAccessKey, err := userdata.AccessFileAccess(un, filename, oldFileInterKey)
-	if err != nil {
-		return err
-	}
-
-	// Decrypt the entry
-	fileAccessValue, err := userdata.ConfirmAuthenticityHMAC(fileAccessKey, oldFileMacKey, oldFileEncKey)
-	if err != nil {
-		return err
-	}
-
-	// Unmarshal the struct and recover information
-	var fileAccess FileAccess
-	json.Unmarshal(fileAccessValue, &fileAccess)
-
-	//delete old fileAccess
-	userlib.DatastoreDelete(fileAccessKey)
-
-	//recreate
-	err = userdata.CreateFileAccess(un, filename, fileInterKey, fileEncKey, fileMacKey, fileAccessValue)
-	if err != nil {
-		return err
-	}
-
 	return nil
+}
+
+func removeFromArray(arr []string, i int) []string {
+	copy(arr[i:], arr[i+1:])
+	//return
+	return arr[:len(arr)-1]
 }
 
 // reencrypt a file's AuthorizedUserInter, AuthorizedUser, FileAccess structs
 // may not be called by owner of structs (but called by owner of file)
 func (userdata *User) RegenHelperStructs(un string, owner bool, filename string, fileEncKey []byte, fileMacKey []byte, fileNameKey []byte, fileInterKey []byte, ownerHash []byte, oldFileEncKey []byte, oldFileMacKey []byte, oldFileInterKey []byte, oldOwnerHash []byte) (err error) {
-	// Generate macKey and encKey
-	// _, _, nameKey, err := GenerateKeys(un, pw)
-	// // Error checking if GenerateKeys fails
-	// if err != nil {
-	// 	return errors.New("GenerateKeys fails")
-	// }
-	//nameKey := []byte("nothing")
 	// fmt.Println("calling regenhelper on " + un) //expect alice
-	userlib.DebugMsg("calling regen helper on %s by %s", un, userdata.Username)
+	userlib.DebugMsg("\n\n!!!!!!!!!!!calling regen helper on %s by %s", un, userdata.Username)
 
 	publicKey, isFetched := userlib.KeystoreGet(userdata.Username + "publicKey")
 	// Error checking if cannot retrieve the KeyStore entry
@@ -1163,7 +1209,7 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	mailBoxE, isFetched := userlib.DatastoreGet(mailBoxKey)
 	// Error checking if cannot retrieve the DataStore entry
 	if !isFetched {
-		return  errors.New("Cannot retrieve MailBox Entry entry")
+		return errors.New("Cannot retrieve MailBox Entry entry")
 	}
 	userlib.DebugMsg("The value of the fetched mailbox is %x", mailBoxE)
 	// Decrypt the entry
@@ -1196,13 +1242,14 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	// Create UUID(entryKey)
 	userlib.DebugMsg("regen; trying to find interUUID: authorizedUserInterKey: %x, len: %d", authorizedUserInterKey, len(authorizedUserInterKey))
 
-	interUUID, err := uuid.FromBytes(authorizedUserInterKey)
-	// Error checking if cannot create userUUID from entryKey
-	if err != nil {
-		return errors.New("Cannot create AuthorizedUserInter's UUID")
-	}
+	// interUUID, err := uuid.FromBytes(authorizedUserInterKey)
+	// // Error checking if cannot create userUUID from entryKey
+	// if err != nil {
+	// 	return errors.New("Cannot create AuthorizedUserInter's UUID")
+	// }
 
-	userlib.DatastoreDelete(interUUID)
+	// userlib.DatastoreDelete(interUUID)
+	// userlib.DebugMsg("deleting old userinter struct..?")
 	//create new one
 	//sign with owner's key
 	err = userdata.SetAuthorizedUserInter(authorizedUserInterKey, publicKey, userdata.SignatureKey, authorizedUserInterByte)
@@ -1261,6 +1308,7 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	if err != nil {
 		return err
 	}
+	userlib.DebugMsg("reached the end of regen")
 
 	return nil
 }
@@ -1335,13 +1383,13 @@ func (userdata *User) ConfirmMailBoxOnly(entryKey userlib.UUID, macKey []byte) (
 	userlib.DebugMsg("the value of the mailbox is %x:", dataStoreEntry)
 	// Retrieve Enc(struct)
 	encryptedStruct := dataStoreEntry[:len(dataStoreEntry)-64]
-	userlib.DebugMsg("the value of the encrypted mailbox is %x",  encryptedStruct)
+	userlib.DebugMsg("the value of the encrypted mailbox is %x", encryptedStruct)
 	// Retrieve HMAC(Enc(struct))
 	HMACEncryptedStruct := dataStoreEntry[len(dataStoreEntry)-64:]
-	userlib.DebugMsg("the value of the hmac mailbox is %x",  HMACEncryptedStruct)
+	userlib.DebugMsg("the value of the hmac mailbox is %x", HMACEncryptedStruct)
 
 	userlib.DebugMsg("The file mac key for this mailbox is %x", macKey)
-	
+
 	// Create HMAC(Enc(struct) with the regenerated macKey
 	newHMACEncryptedStruct, err := userlib.HMACEval(macKey, encryptedStruct)
 	// Error checking if HMACEval fails
@@ -1393,7 +1441,12 @@ func (userdata *User) ConfirmAuthenticityHMAC(entryKey userlib.UUID, macKey []by
 
 // Helper function to check and decrypt the retrieved AuthorizedUserIntermediate
 func (userdata *User) ConfirmAuthenticityIntermediate(filename string, entryValue []byte, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (content []byte, err error) {
+	if filename == "eveFile.tx" {
+		// //print debug
+		// userlib.DebugMsg("confirming authenticity: userHash=%x, combinedHash= %x, recipientUN = %s, owner PK = %s",
+		// 	userHash, combinedHash, recipientUsername, ownerPublicKey)
 
+	}
 	var ownerVerifyKey userlib.DSVerifyKey
 	var isFetched bool = false
 	// Retrieve RSA(key = RSA public key, value = AuthorizedUserIntermediate struct)
@@ -1404,6 +1457,15 @@ func (userdata *User) ConfirmAuthenticityIntermediate(filename string, entryValu
 
 	// AuthorizedTo []SharedFrom
 	authTo := userdata.AuthorizedTo
+	//print it
+	if filename == "eveFile.txt" {
+		userlib.DebugMsg("printing authTo")
+		userlib.DebugMsg("current user: %s", userdata.Username)
+		for i := 0; i < len(authTo); i++ {
+			sharee := authTo[i]
+			userlib.DebugMsg("sharee: un: %s, file: %s", sharee.Username, sharee.Filename)
+		}
+	}
 
 	for i := 0; i < len(authTo); i++ {
 		sharee := authTo[i]
@@ -1413,7 +1475,6 @@ func (userdata *User) ConfirmAuthenticityIntermediate(filename string, entryValu
 			if !isFetched {
 				return nil, errors.New("Cannot retrieve Verify Key")
 			}
-
 		}
 		// fmt.Println(arr[i])
 	}
@@ -1518,7 +1579,6 @@ func (userdata *User) AccessMailBox(recipientUsername string,
 		userHash, combinedHash, recipientUsername, ownerPublicKey)
 
 	entryKey := combinedHash
-
 
 	// Create UUID(entryKey)
 	entryUUID, err = uuid.FromBytes((entryKey[len(entryKey)-16:]))
@@ -1642,7 +1702,7 @@ func AccessAuthorizedUserIntermediate(filename string, nameKey []byte, username 
 		return nil, nil, errors.New("Cannot retrieve DataStore entry")
 	}
 
-	return combinedHash[len(combinedHash) - 16:], authorizedUserIntermediateEntry, nil
+	return combinedHash[len(combinedHash)-16:], authorizedUserIntermediateEntry, nil
 }
 
 // Helper function to create a MailBox entry in DataStore
@@ -1663,8 +1723,8 @@ func (userdata *User) CreateMailBox(username string, ownerHash []byte,
 		userHash, combinedHash, username, ownerPublicKey)
 
 	entryKey := combinedHash
-	
-		userlib.DebugMsg("This mailbox's content is %x", authorizedUserInterKey)
+
+	userlib.DebugMsg("This mailbox's content is %x", authorizedUserInterKey)
 	// Create UUID(entryKey)
 	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey)-16:]))
 	// Error checking if cannot create userUUID from entryKey

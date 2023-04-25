@@ -291,8 +291,8 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Getting user Alice.")
 			aliceLaptop, err = client.GetUser("alice", defaultPassword)
-			Expect(err).To(BeNil())	
-			
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Storing file data: %s", contentOne)
 			err = alice.StoreFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
@@ -308,7 +308,7 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-			
+
 			userlib.DebugMsg("Getting user Alice.")
 			aliceLaptop, err = client.GetUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -365,11 +365,10 @@ var _ = Describe("Client Tests", func() {
 		})
 	})
 
-
 	Describe("CreateInvitation/AcceptInvitation Tests ", func() {
 
 		Specify("CreateInvitation/AcceptInvitation Tests: Overwriting the original file", func() {
-			
+
 			userlib.DebugMsg("Initializing users Alice (aliceDesktop) and Bob.")
 			aliceDesktop, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -437,7 +436,7 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Charles accepting invite from Bob under filename %s.", charlesFile)
 			err = charles.AcceptInvitation("bob", invite, charlesFile)
 			Expect(err).To(BeNil())
-			
+
 			userlib.DebugMsg("Charles appending to file %s, content: %s", charlesFile, contentThree)
 			err = charles.AppendToFile(charlesFile, []byte(contentThree))
 			Expect(err).To(BeNil())
@@ -471,7 +470,7 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
 
-				invite, err := alice.CreateInvitation(aliceFile, "bob")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
 			err = bob.AcceptInvitation("alice", invite, bobFile)
