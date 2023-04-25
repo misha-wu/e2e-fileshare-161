@@ -265,6 +265,22 @@ var _ = Describe("Client Tests", func() {
 			aliceLaptop, err = client.GetUser("alice", "wrongpassword")
 			Expect(err).ToNot(BeNil())
 		})
+
+		Specify("InitUser/GetUser Tests: Empty username", func() {
+			userlib.DebugMsg("Initializing user empty.")
+			alice, err = client.InitUser("", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("InitUser/GetUser Tests: Initialiazing a user twice", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
 	})
 
 	Describe("StoreFile/LoadFile Single User Tests ", func() {

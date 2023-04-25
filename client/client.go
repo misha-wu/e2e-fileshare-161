@@ -678,6 +678,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	fileInterKey := senderAuthorizedUserContent.FileInterKey
 	fileName := senderAuthorizedUserContent.Filename
 	ownerPublicKey := senderAuthorizedUserContent.OwnerPublicKey
+	userlib.DebugMsg("the owner's public key is %s", ownerPublicKey)
 
 	// Create the AuthorizedUserIntermediate struct
 	authorizedUserIntermediateStruct := AuthorizedUserIntermediate{fileInterKey, fileEncKey, fileMacKey}
@@ -750,11 +751,12 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	}
 
 	// Create a MailBox entry in DataStore
-	_, authorizedUserKey, err := AccessAuthorizedUser(fileName, userdata.Username, fileInterKey)
+	authorizedUserInterKey, err := AccessAuthorizedUserIntermediate(filename, nameKey, userdata.Username, publicKey)
 	if err != nil {
 		return err
 	}
-	mailBoxStruct := MailBox{authorizedUserKey}
+	mailBoxStruct := MailBox{authorizedUserInterKey}
+	
 
 	// Change the MailBox struct into a byte slice
 	mailBoxByte, err := json.Marshal(mailBoxStruct)
@@ -763,7 +765,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return errors.New("Cannot serialize the MailBox struct")
 	}
 
-	err = userdata.CreateMailBox(userdata.Username, ownerHash, ownerPublicKey, authorizedUserKey, fileEncKey, fileMacKey, mailBoxByte)
+	err = userdata.CreateMailBox(userdata.Username, ownerHash, ownerPublicKey, authorizedUserInterKey, fileEncKey, fileMacKey, mailBoxByte)
 	if err != nil {
 		return err
 	}
@@ -867,8 +869,11 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	for i := 1; i < len(authUsers); i++ {
 		sharee := authUsers[i]
 		if sharee != recipientUsername {
-			userdata.RecursivelyRegenHelperStructs(sharee, filename, fileEncKey,
+			err = userdata.RecursivelyRegenHelperStructs(sharee, filename, fileEncKey,
 				fileMacKey, fileNameKey, fileInterKey, ownerHash, oldFileEncKey, oldFileMacKey, oldFileNameKey, oldFileInterKey, oldOwnerHash)
+			if err != nil {
+				return err
+			}
 		}
 		// fmt.Println(arr[i])
 	}
@@ -1043,9 +1048,11 @@ func (userdata *User) RegenOwnerStructs(un string, owner bool, filename string, 
 		return errors.New("Cannot retrieve Public Key")
 	}
 
+	userlib.DebugMsg("regenownerstructs: getting %s's public key which is %s", userdata.Username, publicKey)
 	//create new structs
 	var newAuthorizedUserInter AuthorizedUserIntermediate = AuthorizedUserIntermediate{fileInterKey, fileEncKey, fileMacKey}
 	var newAuthorizedUser AuthorizedUser = AuthorizedUser{filename, owner, ownerHash, fileEncKey, fileMacKey, fileNameKey, fileInterKey, publicKey}
+	
 	// var newFileAccess FileAccess = FileAccess{} //we need to set this later
 
 	//AUTH USER INTER STRUCT=================================
@@ -1136,11 +1143,12 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	// fmt.Println("calling regenhelper on " + un) //expect alice
 	userlib.DebugMsg("calling regen helper on %s by %s", un, userdata.Username)
 
-	publicKey, isFetched := userlib.KeystoreGet(un + "publicKey")
+	publicKey, isFetched := userlib.KeystoreGet(userdata.Username + "publicKey")
 	// Error checking if cannot retrieve the KeyStore entry
 	if !isFetched {
 		return errors.New("Cannot retrieve Public Key")
 	}
+	userlib.DebugMsg("getting %s's public key which is %s", userdata.Username, publicKey)
 	userlib.DebugMsg("getting mailbox")
 	// Access the MailBox struct
 	mailBoxKey, err := userdata.AccessMailBox(un, oldOwnerHash, publicKey)
@@ -1149,20 +1157,21 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 	}
 
 	userlib.DebugMsg("obtained mailbox key at %x, ownerHash is (was) %s", mailBoxKey, oldOwnerHash)
-	// userlib.DebugMsg("getting mailbox")
+	userlib.DebugMsg("getting mailbox")
+	mailBoxE, isFetched := userlib.DatastoreGet(mailBoxKey)
+	// Error checking if cannot retrieve the DataStore entry
+	if !isFetched {
+		return  errors.New("Cannot retrieve MailBox Entry entry")
+	}
+	userlib.DebugMsg("The value of the fetched mailbox is %x", mailBoxE)
 	// Decrypt the entry
-	encryptedMailbox, err := userdata.ConfirmHMACOnly(mailBoxKey, oldFileMacKey)
+	encryptedMailbox, err := userdata.ConfirmMailBoxOnly(mailBoxKey, oldFileMacKey)
 	if err != nil {
 		return errors.New("failed confirminig mailbox auth")
 	}
 
 	userlib.DebugMsg("decrypting mailbox")
-	mailBoxEntry, err := userlib.PKEDec(userdata.PrivateKey, encryptedMailbox)
-	userlib.DebugMsg("caught a fish, error : %s", err)
-
-	if err != nil {
-		return errors.New("Cannot decrypt this Mailbox entry")
-	}
+	mailBoxEntry := userlib.SymDec(oldFileEncKey, encryptedMailbox)
 
 	userlib.DebugMsg("unmarshalling mailbox bytes")
 	// Unmarshal the struct and recover information
@@ -1171,7 +1180,7 @@ func (userdata *User) RegenHelperStructs(un string, owner bool, filename string,
 
 	authorizedUserInterKey := mailBox.RecipientAuthorUserInterUUID
 	userlib.DebugMsg("found %s's authuserinter key in mailbox; access: %s", un, userdata.Username)
-
+	userlib.DebugMsg("The authorizedUserInter key is %s", authorizedUserInterKey)
 	//create new structs
 	var newAuthorizedUserInter AuthorizedUserIntermediate = AuthorizedUserIntermediate{fileInterKey, fileEncKey, fileMacKey}
 
@@ -1312,7 +1321,41 @@ func GenerateKeys(username string, password string) (macKey []byte, encKey []byt
 
 	return macKey, encKey, nameKey, nil
 }
-func (userdata *User) ConfirmHMACOnly(entryKey userlib.UUID, macKey []byte) (content []byte, err error) {
+func (userdata *User) ConfirmMailBoxOnly(entryKey userlib.UUID, macKey []byte) (content []byte, err error) {
+	// Fetching the DataStore entry
+	dataStoreEntry, isFetched := userlib.DatastoreGet(entryKey)
+	// Error checking if cannot retrieve the DataStore entry
+	if !isFetched {
+		return nil, errors.New("Cannot retrieve DataStore entry")
+	}
+	userlib.DebugMsg("the value of the mailbox is %x:", dataStoreEntry)
+	// Retrieve Enc(struct)
+	encryptedStruct := dataStoreEntry[:len(dataStoreEntry)-64]
+	userlib.DebugMsg("the value of the encrypted mailbox is %x",  encryptedStruct)
+	// Retrieve HMAC(Enc(struct))
+	HMACEncryptedStruct := dataStoreEntry[len(dataStoreEntry)-64:]
+	userlib.DebugMsg("the value of the hmac mailbox is %x",  HMACEncryptedStruct)
+
+	userlib.DebugMsg("The file mac key for this mailbox is %x", macKey)
+	
+	// Create HMAC(Enc(struct) with the regenerated macKey
+	newHMACEncryptedStruct, err := userlib.HMACEval(macKey, encryptedStruct)
+	// Error checking if HMACEval fails
+	if err != nil {
+		return nil, errors.New("Cannot HMAC the encrypted struct")
+	}
+
+	// Confirm authenticity using HMACEqual()
+	if !userlib.HMACEqual(HMACEncryptedStruct, newHMACEncryptedStruct) {
+		return nil, errors.New("Data has been modifiedskdjfkms")
+	}
+
+	return encryptedStruct, nil
+}
+
+// Helper to confirm authenticity (data has not been tampered with)
+func (userdata *User) ConfirmAuthenticityHMAC(entryKey userlib.UUID, macKey []byte, encKey []byte) (content []byte, err error) {
+
 	// Fetching the DataStore entry
 	dataStoreEntry, isFetched := userlib.DatastoreGet(entryKey)
 	// Error checking if cannot retrieve the DataStore entry
@@ -1335,42 +1378,6 @@ func (userdata *User) ConfirmHMACOnly(entryKey userlib.UUID, macKey []byte) (con
 
 	// Confirm authenticity using HMACEqual()
 	if !userlib.HMACEqual(HMACEncryptedStruct, newHMACEncryptedStruct) {
-		return nil, errors.New("Data has been modifiedskdjfkms")
-	}
-
-	return encryptedStruct, nil
-}
-
-// Helper to confirm authenticity (data has not been tampered with)
-func (userdata *User) ConfirmAuthenticityHMAC(entryKey userlib.UUID, macKey []byte, encKey []byte) (content []byte, err error) {
-
-	// // Fetching the DataStore entry
-	// dataStoreEntry, isFetched := userlib.DatastoreGet(entryKey)
-	// // Error checking if cannot retrieve the DataStore entry
-	// if !isFetched {
-	// 	return nil, errors.New("Cannot retrieve DataStore entry")
-	// }
-
-	// // Retrieve Enc(struct)
-	// encryptedStruct := dataStoreEntry[:len(dataStoreEntry)-64]
-
-	// // Retrieve HMAC(Enc(struct))
-	// HMACEncryptedStruct := dataStoreEntry[len(dataStoreEntry)-64:]
-
-	// // Create HMAC(Enc(struct) with the regenerated macKey
-	// newHMACEncryptedStruct, err := userlib.HMACEval(macKey, encryptedStruct)
-	// // Error checking if HMACEval fails
-	// if err != nil {
-	// 	return nil, errors.New("Cannot HMAC the encrypted struct")
-	// }
-
-	// // Confirm authenticity using HMACEqual()
-	// if !userlib.HMACEqual(HMACEncryptedStruct, newHMACEncryptedStruct) {
-	// 	return nil, errors.New("Data has been modified")
-	// }
-	encryptedStruct, err := userdata.ConfirmHMACOnly(entryKey, macKey)
-
-	if err != nil {
 		return nil, errors.New("Data has been modified")
 	}
 
@@ -1638,26 +1645,21 @@ func AccessAuthorizedUserIntermediate(filename string, nameKey []byte, username 
 // username here is the owner of the struct
 // owner public key is fileowner's public key
 func (userdata *User) CreateMailBox(username string, ownerHash []byte,
-	ownerPublicKey userlib.PKEEncKey, authorizedUserKey []byte, fileEncKey []byte,
+	ownerPublicKey userlib.PKEEncKey, authorizedUserInterKey []byte, fileEncKey []byte,
 	fileMacKey []byte, mailBox []byte) (err error) {
 
 	// key: PKE(hash(ownerHash || recipient name))
-	// value: Enc(key = fileEncKey, value = AuthorizedUser struct) ||
-	// HMAC(Enc(key = fileMacKey, value = AuthorizedUser struct))
+	// value: ENC(fileEncKey, val = authorizeduserinterkey) ||
+	// HMAC(rsa(key = fileMacKey, value = authorizeduserinterkey))
 
 	userHash := userlib.Hash([]byte(username))
 	combinedHash := append(ownerHash, userHash...)
 	combinedHash = userlib.Hash(combinedHash)
-	userlib.DebugMsg("creating mailbox regenerating values: userHash=%x, combinedHash= %x, recipientUN = %s, ownerPK: %x",
+	userlib.DebugMsg("creating mailbox regenerating values: userHash=%x, combinedHash= %x, recipientUN = %s, ownerPK: %s",
 		userHash, combinedHash, username, ownerPublicKey)
 
 	entryKey := combinedHash
-
-	// entryKey, err := userlib.PKEEnc(ownerPublicKey, combinedHash)
-	// // Error checking if cannot create the HashKDF
-	// if err != nil {
-	// 	return errors.New("Cannot create the MailBox's entry key")
-	// }
+	
 
 	// Create UUID(entryKey)
 	entryUUID, err := uuid.FromBytes((entryKey[len(entryKey)-16:]))
@@ -1666,9 +1668,10 @@ func (userdata *User) CreateMailBox(username string, ownerHash []byte,
 		return errors.New("Cannot create MailBox's UUID")
 	}
 
-	// Enc(key = fileEncKey, value = authorizedUserKey)
 	iv := userlib.RandomBytes(16)
-	encryptedMailBox := userlib.SymEnc(fileEncKey, iv, authorizedUserKey)
+	// Enc(owner public key, value = authorizeduserkey)
+	encryptedMailBox := userlib.SymEnc(fileEncKey, iv, authorizedUserInterKey)
+	userlib.DebugMsg("The encrypted mailbox is %x", encryptedMailBox)
 
 	// HMAC(Enc(key = fileMacKey, value = authorizedUserKey))
 	HMACEncryptedMailBox, err := userlib.HMACEval(fileMacKey, encryptedMailBox)
@@ -1676,12 +1679,14 @@ func (userdata *User) CreateMailBox(username string, ownerHash []byte,
 	if err != nil {
 		return errors.New("Cannot HMAC the encrypted struct")
 	}
+	userlib.DebugMsg("The HMACEncryptedMalBox is %x", HMACEncryptedMailBox)
 
 	entryValue := append(encryptedMailBox, HMACEncryptedMailBox...)
-
+	userlib.DebugMsg("The mailbox value is %x", entryValue)
+	userlib.DebugMsg("The filemackey is %x", fileMacKey)
 	// Storing (key, value) in DataStore
 	userlib.DatastoreSet(entryUUID, entryValue)
-	userlib.DebugMsg("mailbox struct: uuid=%x, owner= %s, fileowner hash = %s", entryUUID, username, ownerHash)
+	userlib.DebugMsg("mailbox struct: uuid=%x, recipient's username = %s, fileowner hash = %s", entryUUID, username, ownerHash)
 
 	return nil
 }
