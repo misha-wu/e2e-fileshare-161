@@ -730,6 +730,62 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		Specify("Checking for valid recipient", func() {
+			userlib.DebugMsg("Initializing users Alice, Bob, and Charlie.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, but Bob doesn't exist", aliceFile)
+
+			_, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+
+		})
+
+		Specify("Testing Invitations: erroring on tampering", func() {
+			userlib.DebugMsg("Initializing users Alice, Bob, and Charlie.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite_bob, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			//overwrite datastore entry
+			abcd := userlib.RandomBytes(300)
+			userlib.DatastoreSet(invite_bob, abcd)
+
+			userlib.DebugMsg("Bob's invitation is tampered with")
+			err = bob.AcceptInvitation("alice", invite_bob, bobFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Charles.")
+			invite_charles, err := alice.CreateInvitation(aliceFile, "charles")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob tries to accept Charles's invitation")
+			err = bob.AcceptInvitation("alice", invite_charles, charlesFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Alice creating invite on nonexistent file for Charles.")
+			_, err = alice.CreateInvitation("Sdf", "bob")
+			Expect(err).ToNot(BeNil())
+
+		})
+
 		Specify("Check that Invitation to other people is still valid after Revocation", func() {
 			userlib.DebugMsg("Initializing users Alice, Bob, and Charlie.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -902,6 +958,63 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Checking that Charles's invitation is invalid")
 			err = charles.AcceptInvitation("bob", inviteCharles, charlesFile)
 			Expect(err).ToNot(BeNil())
+
+		})
+
+		Specify("Testing Revoke: Revoke Access after Data Tampering", func() {
+			userlib.DebugMsg("Initializing users Alice, Bob, and Charlie.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			eve, err = client.InitUser("eve", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that Alice can still load the file.")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+			userlib.DebugMsg("Checking that Bob can load the file.")
+			data, err = bob.LoadFile(bobFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+
+			userlib.DebugMsg("Alice creating invite for eve for file %s, and Eve accepting invite under name %s.", aliceFile, eveFile)
+
+			invite, err = alice.CreateInvitation(aliceFile, "eve")
+			Expect(err).To(BeNil())
+
+
+			//overwrite datastore entry
+			abcd := userlib.RandomBytes(300)
+			userlib.DatastoreSet(invite, abcd)
+
+			err = eve.AcceptInvitation("alice", invite, eveFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that Alice can still load the file.")
+			data, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
 
 		})
 	})
