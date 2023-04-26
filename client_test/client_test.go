@@ -7,14 +7,17 @@ import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
 	_ "encoding/hex"
+	"errors"
 	_ "errors"
+	"fmt"
 	_ "strconv"
-	_ "strings"
+	"strings"
 	"testing"
 
 	// A "dot" import is used here so that the functions in the ginko and gomega
 	// modules can be used without an identifier. For example, Describe() and
 	// Expect() instead of ginko.Describe() and gomega.Expect().
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -28,6 +31,36 @@ func TestSetupAndExecution(t *testing.T) {
 	RunSpecs(t, "Client Tests")
 }
 
+func DeepCopyOfDatastore() map[userlib.UUID][]byte {
+	DataStoreCopy := make(map[userlib.UUID][]byte)
+
+	var datastore map[userlib.UUID][]byte = userlib.DatastoreGetMap()
+
+	for key, val := range datastore {
+		DataStoreCopy[key] = val
+	}
+	return DataStoreCopy
+
+}
+
+func FindDifferentKey(prev map[userlib.UUID][]byte, curr map[userlib.UUID][]byte) userlib.UUID {
+
+	for key, v1 := range curr {
+		if v2, ok := prev[key]; ok {
+			// fmt.Printf("%f / %f = %f\n", value1, value2, value1/value2)
+			if fmt.Sprint(v1) != fmt.Sprint(v2) {
+				userlib.DebugMsg("key value changed")
+				return key
+			}
+		} else {
+			//key found in curr but not prev
+			//was added
+			userlib.DebugMsg("key was added")
+			return key
+		}
+	}
+	return uuid.Nil
+}
 // ================================================
 // Global Variables (feel free to add more!)
 // ================================================
@@ -36,6 +69,7 @@ const emptyString = ""
 const contentOne = "Bitcoin is Nick's favorite "
 const contentTwo = "digital "
 const contentThree = "cryptocurrency!"
+var contentFour = strings.Repeat("repeater", 100000)
 
 // ================================================
 // Describe(...) blocks help you organize your tests
@@ -44,6 +78,13 @@ const contentThree = "cryptocurrency!"
 // ================================================
 
 var _ = Describe("Client Tests", func() {
+
+	measureBandwidth := func(probe func()) (bandwidth int) {
+		before := userlib.DatastoreGetBandwidth()
+		probe()
+		after := userlib.DatastoreGetBandwidth()
+		return after - before
+	}
 
 	// A few user declarations that may be used for testing. Remember to initialize these before you
 	// attempt to use them!
@@ -1018,14 +1059,139 @@ var _ = Describe("Client Tests", func() {
 
 		})
 
-
-		Specify("Chain sharing.", func() {
+		Specify("Store/Load File: Filenames, ", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-
+	
 			userlib.DebugMsg("Storing file data: %s", contentOne)
 			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Initializing user Eve.")
+			eve, err = client.InitUser("eve", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Initializing user Charles.")
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Bob accepting invite from Alice under filename empty \"\".")
+			err = bob.AcceptInvitation("alice", invite, "")
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Bob tries to accept on the same invite twice")
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).ToNot(BeNil())
+	
+			userlib.DebugMsg("Alice creating invite for Eve.")
+			invite, err = alice.CreateInvitation(aliceFile, "eve")
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Eve accepting invite from Alice under filename %s.", eveFile)
+			err = eve.AcceptInvitation("alice", invite, eveFile)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Alice revoking Eve's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "eve")
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Checking that Alice can still load the file.")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+	
+			userlib.DebugMsg("Checking that Eve cannot send invitations to others")
+			_, err = eve.CreateInvitation(eveFile, "charles")
+			Expect(err).ToNot(BeNil())
+			// Expect(data).To(Equal([]byte(contentOne)))
+	
+		})
+
+		Specify("Measuring Append Bandwidth", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+	
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+	
+			bw1 := measureBandwidth(func() {
+				userlib.DebugMsg("Appending file data: %s", contentTwo)
+				bob.AppendToFile(bobFile, []byte(contentTwo))
+				Expect(err).To(BeNil())
+			})
+	
+			bw2 := measureBandwidth(func() {
+				userlib.DebugMsg("Appending file data: contentFour (long)")
+				alice.AppendToFile(aliceFile, []byte(contentFour))
+				Expect(err).To(BeNil())
+	
+			})
+	
+			if bw2 > 1000*bw1 {
+				print(errors.New("bandwidth exceeded"))
+	
+			}
+	
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentFour)))
+	
+			//test append empty
+			userlib.DebugMsg("Appending file data: contentFour (long)")
+			alice.AppendToFile(aliceFile, []byte{})
+			Expect(err).To(BeNil())
+		})
+
+		Specify("Fuzz Testing", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			db := DeepCopyOfDatastore()
+	
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			key := FindDifferentKey(db, userlib.DatastoreGetMap())
+			current, ok := userlib.DatastoreGet(key)
+			if !ok {
+				return
+			}
+	
+			userlib.DatastoreSet(key, append([]byte("tampering"), current...))
+	
+			_, err := alice.LoadFile(aliceFile)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Chain sharing.", func() { //MODIFY ME
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Initializing user Bob.")
@@ -1040,44 +1206,48 @@ var _ = Describe("Client Tests", func() {
 			doris, err = client.InitUser("doris", defaultPassword)
 			Expect(err).To(BeNil())
 
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Initializing user Eve.")
 			eve, err = client.InitUser("eve", defaultPassword)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Alice creating invite for Bob.")
-			invite, err := alice.CreateInvitation(aliceFile, "bob")
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
-			err = bob.AcceptInvitation("alice", invite, bobFile)
-			Expect(err).To(BeNil())
-
 			userlib.DebugMsg("Alice creating invite for Charles.")
-			invite, err = alice.CreateInvitation(aliceFile, "charles")
+			invite, err := alice.CreateInvitation(aliceFile, "charles")
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Charles accepting invite from Alice under filename %s.", charlesFile)
 			err = charles.AcceptInvitation("alice", invite, charlesFile)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Charles creating invite for Doris.")
-			invite, err = charles.CreateInvitation(charlesFile, "doris")
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err = alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Doris accepting invite from Charles under filename %s.", dorisFile)
-			err = doris.AcceptInvitation("charles", invite, dorisFile)
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob creating invite for Eve.")
-			invite, err = bob.CreateInvitation(bobFile, "eve")
+			userlib.DebugMsg("Bob creating invite for Doris.")
+			invite, err = bob.CreateInvitation(bobFile, "doris")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Eve accepting invite from Bob under filename %s.", eveFile)
-			err = eve.AcceptInvitation("bob", invite, eveFile)
+			userlib.DebugMsg("Doris accepting invite from Bob under filename %s.", dorisFile)
+			err = doris.AcceptInvitation("bob", invite, dorisFile)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Charles appending to file %s, content: %s", charlesFile, contentTwo)
-			err = charles.AppendToFile(charlesFile, []byte(contentTwo))
+			userlib.DebugMsg("Charles creating invite for Eve.")
+			invite, err = charles.CreateInvitation(charlesFile, "eve")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Eve accepting invite from Charles under filename %s.", eveFile)
+			err = eve.AcceptInvitation("charles", invite, eveFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob appending to file %s, content: %s", bobFile, contentTwo)
+			err = bob.AppendToFile(bobFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Eve appending to file %s, content: %s", eveFile, contentThree)
@@ -1088,6 +1258,39 @@ var _ = Describe("Client Tests", func() {
 			data, err := alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+		})
+
+		Specify("Swapping User Structs", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+	
+			prealice := DeepCopyOfDatastore()
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			postalice := DeepCopyOfDatastore()
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			postbob := DeepCopyOfDatastore()
+	
+			aliceUserUUID := FindDifferentKey(prealice, postalice)
+			Expect(err).To(BeNil())
+	
+			bobUserUUID := FindDifferentKey(postalice, postbob)
+			Expect(err).To(BeNil())
+	
+			bobHolder, _ := userlib.DatastoreGet(bobUserUUID)
+			aliceHolder, _ := userlib.DatastoreGet(aliceUserUUID)
+	
+			userlib.DatastoreSet(bobUserUUID, aliceHolder)
+			userlib.DatastoreSet(aliceUserUUID, bobHolder)
+	
+			_, abc := client.GetUser("alice", defaultPassword)
+			Expect(abc).ToNot(BeNil())
+	
+			_, abc = client.GetUser("bob", defaultPassword)
+			Expect(abc).ToNot(BeNil())
 		})
 	})
 })

@@ -564,6 +564,13 @@ func (userdata *User) CreateInvitation(fn string, recipientUsername string) (
 		return uuid.New(), err
 	}
 
+	// Retrieve the file
+	_, _, _, _, _, _, _, err = userdata.GetFile(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
+	if err != nil {
+		return uuid.New(), err
+	}
+
+
 	authorizedUserContent, senderAuthorizedUser, fileInterKey, err := userdata.GetAuthorizedUser(userdata.Username, filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
 		return uuid.New(), err
@@ -575,6 +582,7 @@ func (userdata *User) CreateInvitation(fn string, recipientUsername string) (
 	ownerFileAlias := authorizedUserContent.OwnerFileAlias
 	ownerHash := authorizedUserContent.OwnerHash
 
+	
 	// Find the recipient's publicKey
 	recipientPublicKey, isFetched := userlib.KeystoreGet(recipientUsername + "publicKey")
 	// Error checking if cannot retrieve the KeyStore entry
@@ -897,6 +905,7 @@ func (userdata *User) RevokeAccess(fn string, recipientUsername string) error {
 	if err != nil {
 		return err
 	}
+
 	// Check integrity and decrypt the retrieved AuthorizedUserIntermediate entry
 	DecryptedAuthUserInter, err := userdata.ConfirmAuthenticityIntermediate(filename, AuthorizedUserIntermediateEntry, privateKey, verifyKey)
 	if err != nil {
@@ -963,6 +972,7 @@ func (userdata *User) RevokeAccess(fn string, recipientUsername string) error {
 	if err != nil {
 		return err
 	}
+
 
 	for i := 1; i < len(authUsers); i++ {
 		sharee := authUsers[i]
