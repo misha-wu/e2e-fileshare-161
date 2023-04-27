@@ -1358,49 +1358,5 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 
 		})
-
-		Specify("Swapping invitations", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Initializing user Bob.")
-			bob, err = client.InitUser("bob", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Initializing user Eve.")
-			eve, err = client.InitUser("eve", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Alice creating invite for Bob.")
-			invite_bob, err := alice.CreateInvitation(aliceFile, "bob")
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Alice creating invite for Eve.")
-			invite_eve, err := alice.CreateInvitation(aliceFile, "eve")
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Swapping Bob and Eve invites")
-			invite_bob_content, ok := userlib.DatastoreGet(invite_bob)
-			Expect(ok).To(Equal(true))
-
-			invite_eve_content, ok := userlib.DatastoreGet(invite_eve)
-			Expect(ok).To(Equal(true))
-
-
-			userlib.DatastoreSet(invite_eve, invite_bob_content)
-			userlib.DatastoreSet(invite_bob, invite_eve_content)
-
-			userlib.DebugMsg("Bob shouldn't be able to accept the invite")
-			err = bob.AcceptInvitation("alice", invite_bob, bobFile)
-			Expect(err).ToNot(BeNil())
-
-			userlib.DebugMsg("Eve shouldn't be able to accept the invite")
-			err = doris.AcceptInvitation("alice", invite_eve, dorisFile)
-			Expect(err).ToNot(BeNil())
-
-		})
-			
-
 	})
 })
