@@ -1362,17 +1362,13 @@ var _ = Describe("Client Tests", func() {
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob loads the file")
-			_, err = bob.LoadFile(bobFile)
-			Expect(err).ToNot(BeNil())
-
-			userlib.DebugMsg("Appending file data")
-			alice.AppendToFile(aliceFile, []byte(contentOne))
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err = alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob loads the file")
-			_, err = bob.LoadFile(bobFile)
-			Expect(err).ToNot(BeNil())
+			userlib.DebugMsg("Bob accepts the invitation")
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
 
 		})
 
