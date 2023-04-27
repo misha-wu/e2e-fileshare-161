@@ -297,6 +297,18 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	// Unmarshal the struct and recover user information
 	json.Unmarshal(decryptedUser, &userdata)
 
+	authorizedToUUID, err := userdata.AccessAuthorizedTo(username)
+	if err != nil {
+		return nil, errors.New("Cannot retrieve authorizedToUUID")
+	}
+
+	// Decrypt the encryptedUser
+	_, err = userdata.ConfirmAuthenticityHMAC(authorizedToUUID, macKey, encKey)
+	// Error checking if data has been tampered
+	if err != nil {
+		return nil, errors.New("Data has been tampered with")
+	}
+
 	userdataptr = &userdata
 	return userdataptr, nil
 }
@@ -1925,6 +1937,7 @@ func (userdata *User) AccessAuthorizedTo(username string) (entryUUID uuid.UUID, 
 
 	return authorizedToUUID, nil
 }
+
 
 // Helper function to store the AuthorizedTo entry in DataStore
 func (userdata *User) CreateAuthorizedTo(username string, password string, content []byte) (err error) {
