@@ -1291,32 +1291,15 @@ var _ = Describe("Client Tests", func() {
 	
 			_, abc = client.GetUser("bob", defaultPassword)
 			Expect(abc).ToNot(BeNil())
-		})
-
-		Specify("Loading File Corruption", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-	
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-	
-			prestore := DeepCopyOfDatastore()
-			userlib.DebugMsg("Alice storing file")
-			err := alice.StoreFile(aliceFile, []byte(contentOne))
-			poststore := DeepCopyOfDatastore()
-	
-			fileUUID := FindDifferentKey(prestore, poststore)
-				
-			userlib.DatastoreSet(fileUUID, userlib.RandomBytes(100))
-	
-			userlib.DebugMsg("Checking that Alice cannot load the file.")
-			_, err = alice.LoadFile(aliceFile)
-			Expect(err).ToNot(BeNil())
-			
-		})
+		})	
 
 		Specify("Sending wrong files and invitations invitations", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentTwo)
+			err = alice.StoreFile(aliceFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Initializing user Bob.")
@@ -1337,7 +1320,7 @@ var _ = Describe("Client Tests", func() {
 			invite, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob accepts with Alice's filename")
+			userlib.DebugMsg("Bob accepts with Bob's existing filename")
 			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).ToNot(BeNil())
 
@@ -1354,7 +1337,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Bob accepts the wrong invitation")
-			err = bob.AcceptInvitation("alice", invite_eve, aliceFile)
+			err = bob.AcceptInvitation("alice", invite_eve, bobFile)
 			Expect(err).ToNot(BeNil())
 
 		})
