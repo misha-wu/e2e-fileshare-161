@@ -1313,5 +1313,50 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 			
 		})
+
+		Specify("Sending wrong files and invitations invitations", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentTwo)
+			err = bob.StoreFile(bobFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Sharing wrong file")
+			_, err := alice.CreateInvitation(bobFile, "bob")
+			Expect(err).ToNot(BeNil())
+			_, err = alice.CreateInvitation(aliceFile, "bobb")
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepts with Alice's filename")
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Bob accepts invitation from wrong sender's name")
+			err = bob.AcceptInvitation("eve", invite, aliceFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Initializing user Eve.")
+			eve, err = client.InitUser("eve", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Eve.")
+			invite_eve, err := alice.CreateInvitation(aliceFile, "eve")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepts the wrong invitation")
+			err = bob.AcceptInvitation("alice", invite_eve, aliceFile)
+			Expect(err).ToNot(BeNil())
+
+		})
 	})
 })
