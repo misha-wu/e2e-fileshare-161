@@ -1350,6 +1350,10 @@ var _ = Describe("Client Tests", func() {
 			bob, err = client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
 
+			userlib.DebugMsg("Initializing user Eve.")
+			eve, err = client.InitUser("eve", defaultPassword)
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Alice creating invite for Bob.")
 			invite, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
@@ -1363,12 +1367,28 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Alice creating invite for Bob.")
-			invite, err = alice.CreateInvitation(aliceFile, "bob")
+			invite_bob, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob accepts the invitation")
-			err = bob.AcceptInvitation("alice", invite, bobFile)
+			userlib.DebugMsg("Alice creating invite for Eve.")
+			invite_eve, err := alice.CreateInvitation(aliceFile, "eve")
 			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Swapping Bob and Eve invites")
+			invite_bob_file, ok := userlib.DatastoreGet(invite_bob)
+			Expect(ok).To(Equal(true))
+			invite_eve_file, ok := userlib.DatastoreGet(invite_eve)
+			Expect(ok).To(Equal(true))
+			userlib.DatastoreSet(invite_bob, invite_eve_file)
+			userlib.DatastoreSet(invite_eve, invite_bob_file)
+
+			userlib.DebugMsg("Bob tries to accept tampered invite")
+			err = bob.AcceptInvitation("alice", invite_bob, bobFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Eve tries to accept tampered invite")
+			err = eve.AcceptInvitation("alice", invite_eve, eveFile)
+			Expect(err).ToNot(BeNil())
 
 		})
 
