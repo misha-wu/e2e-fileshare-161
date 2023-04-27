@@ -1335,7 +1335,46 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Bob accepts the wrong invitation")
 			err = bob.AcceptInvitation("alice", invite_eve, bobFile)
 			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Invite and then revoking", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentTwo)
+			err = alice.StoreFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+			
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Bob.")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepts the invitation")
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+			
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob loads the file")
+			_, err = bob.LoadFile(bobFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Appending file data")
+			alice.AppendToFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob loads the file")
+			_, err = bob.LoadFile(bobFile)
+			Expect(err).ToNot(BeNil())
 
 		})
+
 	})
 })
