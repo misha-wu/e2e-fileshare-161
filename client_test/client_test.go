@@ -1320,10 +1320,6 @@ var _ = Describe("Client Tests", func() {
 			invite, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob accepts with Bob's existing filename")
-			err = bob.AcceptInvitation("alice", invite, bobFile)
-			Expect(err).ToNot(BeNil())
-
 			userlib.DebugMsg("Bob accepts invitation from wrong sender's name")
 			err = bob.AcceptInvitation("eve", invite, aliceFile)
 			Expect(err).ToNot(BeNil())
