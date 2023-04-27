@@ -1334,15 +1334,15 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 
 			userlib.DebugMsg("Alice creating invite for Bob.")
-			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			invite_bob, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Bob accepts with Alice's filename")
-			err = bob.AcceptInvitation("alice", invite, bobFile)
+			err = bob.AcceptInvitation("alice", invite_bob, bobFile)
 			Expect(err).ToNot(BeNil())
 
 			userlib.DebugMsg("Bob accepts invitation from wrong sender's name")
-			err = bob.AcceptInvitation("eve", invite, aliceFile)
+			err = bob.AcceptInvitation("eve", invite_bob, aliceFile)
 			Expect(err).ToNot(BeNil())
 
 			userlib.DebugMsg("Initializing user Eve.")
@@ -1350,13 +1350,20 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Alice creating invite for Eve.")
-			invite_eve, err := alice.CreateInvitation(aliceFile, "eve")
+			_, err = alice.CreateInvitation(aliceFile, "eve")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob accepts the wrong invitation")
-			err = bob.AcceptInvitation("alice", invite_eve, aliceFile)
+			userlib.DebugMsg("Eve accepts the wrong invitation")
+			err = eve.AcceptInvitation("alice", invite_bob, aliceFile)
 			Expect(err).ToNot(BeNil())
 
+			userlib.DebugMsg("Alice revokes wrong file and person")
+			err = alice.RevokeAccess(bobFile, "eve")
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
 		})
 	})
 })
